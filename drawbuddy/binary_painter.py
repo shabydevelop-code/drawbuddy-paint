@@ -82,18 +82,28 @@ def build_region_drawing(source, max_width=500, max_height=350, threshold=None):
         contour = contours[index]
         # Degenerate one/two-pixel contours are not safely bucket-fillable.
         if len(contour) >= 3 and cv2.contourArea(contour) >= 12:
-            mask = np.zeros(binary.shape, dtype=np.uint8)
-            cv2.drawContours(mask, contours, index, 255, thickness=cv2.FILLED)
-            # A child contour is processed later; the seed only needs to be
-            # inside this contour, not necessarily outside all its children.
-            dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-            _, radius, _, seed = cv2.minMaxLoc(dist)
-            if radius >= 1.5:
-                points = [[left + int(p[0][0]), top + int(p[0][1])] for p in contour]
-                steps.append({"name": f"binary region {len(steps)+1} depth {depth}",
-                              "tool": "binary_region", "color": "black" if depth % 2 == 0 else "white",
-                              "points": points,
-                              "fill_point": [left + int(seed[0]), top + int(seed[1])]})
+            # Build the same 2px contour that Paint will draw. Select a
+            # seed only from a raster-enclosed component, never from the
+            # filled contour polygon (which may contain exterior pixels).
+            line = np.zeros(binary.shape, dtype=np.uint8)
+            cv2.polylines(line, [contour], True, 255, 2, lineType=cv2.LINE_8)
+            free = (line == 0).astype(np.uint8)
+            count, labels, stats, centers = cv2.connectedComponentsWithStats(
+                free, connectivity=4)
+            exterior = int(labels[0, 0])
+            enclosed = [i for i in range(1, count)
+                        if i != exterior and stats[i, cv2.CC_STAT_AREA] >= 12]
+            if enclosed:
+                region = max(enclosed, key=lambda i: stats[i, cv2.CC_STAT_AREA])
+                interior = (labels == region).astype(np.uint8)
+                distance = cv2.distanceTransform(interior, cv2.DIST_L2, 5)
+                _, radius, _, seed = cv2.minMaxLoc(distance)
+                if radius >= 1.5:
+                    points = [[left + int(p[0][0]), top + int(p[0][1])] for p in contour]
+                    steps.append({"name": f"binary region {len(steps)+1} depth {depth}",
+                                  "tool": "binary_region", "color": "black" if depth % 2 == 0 else "white",
+                                  "points": points,
+                                  "fill_point": [left + int(seed[0]), top + int(seed[1])]})
         child = int(tree[index][2])
         while child != -1:
             visit(child, depth + 1)
