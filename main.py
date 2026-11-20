@@ -47,7 +47,7 @@ def draw_scene_strokes(path, speed, limit=None):
         mapped = []
         for x, y, radius in points:
             px, py = left + round(x * scale), top + round(y * scale)
-            size = min(4, max(1, round(2 * radius * scale)))
+            size = 1  # Fixed pencil width: no ribbon switching during drawing
             if not mapped or (px, py) != mapped[-1][:2]:
                 mapped.append((px, py, size))
         if not mapped:
@@ -73,17 +73,18 @@ def draw_scene_strokes(path, speed, limit=None):
     # Validate every planned position before touching the Paint canvas.
     for _, points in plan:
         engine.paint.validate_canvas_points(points)
+    print('Fixed Paint pencil width=1; no per-stroke size selection.')
     print(f'Scene Engine Paint test: {len(plan)} stroke segments '
           f'from {min(len(paths), limit or len(paths))} source paths; '
           f'canvas={dest_w}x{dest_h}, scale={scale:.4f}')
     print('Use a NEW blank white maximized Paint canvas. F8 stops drawing.')
     engine.tools.select('pencil')
     engine.colors.select_primary('black')
+    engine.stroke_size.select(1)
     try:
         for index, (size, points) in enumerate(plan, 1):
             from drawbuddy.controller import check_cancel
             check_cancel()
-            engine.stroke_size.select(size)
             engine.canvas.stroke(points)
             if index % 100 == 0:
                 print(f'Scene progress: {index}/{len(plan)}')
