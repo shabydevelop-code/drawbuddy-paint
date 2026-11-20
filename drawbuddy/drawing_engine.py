@@ -57,7 +57,10 @@ class DrawingEngine:
                 continue
             if step['tool'] == 'raster_runs':
                 if step.get('color') not in RGB:
-                    raise ValueError(f'Step {index}: unsupported raster color')
+                    rgb = step.get('color_rgb')
+                    if not isinstance(rgb, list) or len(rgb) != 3 or any(
+                        type(v) is not int or not 0 <= v <= 255 for v in rgb):
+                        raise ValueError(f'Step {index}: unsupported raster color')
                 runs = step.get('runs')
                 if not isinstance(runs, list) or not runs or any(
                     not isinstance(run, list) or len(run) != 3 or
@@ -275,11 +278,13 @@ class DrawingEngine:
                         self.canvas.stroke(path)
                     continue
                 if tool == 'raster_runs':
-                    print(f'\\n{index}/{len(steps)} {name}: {len(step["runs"])} raster spans, color={step["color"]}')
+                    print(f'\\n{index}/{len(steps)} {name}: {len(step["runs"])} raster spans, color={step.get("color_rgb", step.get("color"))}')
                     self.tools.select('pencil')
-                    self.colors.select_primary(step['color'])
+                    if 'color_rgb' in step:
+                        self.colors.select_rgb(step['color_rgb'])
+                    else:
+                        self.colors.select_primary(step['color'])
                     self.stroke_size.select(1)
-                    self.colors.select_primary(step['color'])
                     for x1, x2, y in step['runs']:
                         if x1 == x2:
                             self.paint.click(x1, y)
