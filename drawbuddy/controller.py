@@ -148,11 +148,11 @@ class PaintController:
         cosine = max(-1.0, min(1.0, (ax * bx + ay * by) / (alen * blen)))
         turn = 1.0 - cosine
         if turn > 0.25:
-            floor = 0.004
+            floor = 0.012
         elif turn > 0.055 or (alen <= 2 and blen <= 2):
-            floor = 0.0025
+            floor = 0.008
         else:
-            floor = 0.001
+            floor = 0.005
         return max(base_duration / speed, floor)
 
     @staticmethod
