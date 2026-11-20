@@ -78,6 +78,29 @@ class PaintController:
         if u.GetForegroundWindow() != self.hwnd:
             raise RuntimeError('Paint could not be activated; foreground: ' + window_title(u.GetForegroundWindow()))
 
+    def refresh_display(self):
+        """Force Paint to repaint before screenshots without changing the canvas."""
+        self.activate()
+        # Repaint the window and its children. Unlike File > New, this does
+        # not modify the document or open a save confirmation.
+        RDW_INVALIDATE = 0x0001
+        RDW_UPDATENOW = 0x0100
+        RDW_ALLCHILDREN = 0x0080
+        u.RedrawWindow(self.hwnd, None, None,
+                       RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN)
+        time.sleep(0.25)
+        # Hide/show via minimize/restore also refreshes the compositor and
+        # Paint's canvas view if a direct invalidation was insufficient.
+        u.ShowWindow(self.hwnd, 6)  # SW_MINIMIZE
+        time.sleep(0.25)
+        u.ShowWindow(self.hwnd, 9)  # SW_RESTORE
+        time.sleep(0.35)
+        self.activate()
+        u.RedrawWindow(self.hwnd, None, None,
+                       RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN)
+        time.sleep(0.4)
+        print('Paint display refreshed before capture.')
+
     def click(self, x, y, button='left'):
         self.activate()
         absolute = self.point(x, y)
