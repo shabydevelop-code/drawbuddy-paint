@@ -36,7 +36,10 @@ def main():
             drawing = planner(args.binary_source)
         else:
             drawing = planner(args.binary_source, threshold=args.binary_threshold)
-        print(f'Binary 0/1: {drawing["binary"]}')
+        if "binary" in drawing:
+            print(f'Binary 0/1: {drawing["binary"]}')
+        elif "color" in drawing:
+            print(f'Color raster: {drawing["color"]}')
     else:
         name = args.drawing
         if not name or name in ('.', '..') or Path(name).name != name or '/' in name or '\\\\' in name or not name.replace('-', '').replace('_', '').isalnum():
