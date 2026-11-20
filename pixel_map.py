@@ -5,6 +5,7 @@ inside the requested resolution without stretching; padding is pure white.
 """
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -20,6 +21,13 @@ def build_pixel_map(source, output, width=300, height=328, grid_scale=4):
     if image is None:
         raise ValueError(f'Cannot read source image: {source}')
     src_h, src_w = image.shape[:2]
+    original_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    original_counts = Counter(tuple(map(int, pixel)) for pixel in original_rgb.reshape(-1, 3))
+    print(f'ORIGINAL source: {src_w}x{src_h}; unique RGB colors: {len(original_counts)}')
+    for color, count in original_counts.most_common(24):
+        print(f'  #{color[0]:02X}{color[1]:02X}{color[2]:02X}: {count:,} pixels')
+    if len(original_counts) > 24:
+        print(f'  ... {len(original_counts) - 24} additional colors')
     factor = min(width / src_w, height / src_h)
     dest_w = max(1, min(width, round(src_w * factor)))
     dest_h = max(1, min(height, round(src_h * factor)))
