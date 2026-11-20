@@ -147,7 +147,7 @@ class DrawingEngine:
         return result
 
     @staticmethod
-    def verify_fill_boundary(step):
+    def verify_fill_boundary(step, thickness=1):
         """Check the mapped contour is raster-closed and seed is safely interior.
 
         A 1px Paint pencil line can leak diagonally; check connectivity on
@@ -167,7 +167,7 @@ class DrawingEngine:
             raise ValueError(f'{step["name"]}: mapped fill contour is too small')
         mask = np.zeros((height, width), dtype=np.uint8)
         contour = np.array([[x-x0, y-y0] for x, y in points], dtype=np.int32)
-        cv2.polylines(mask, [contour], True, 255, 1, lineType=cv2.LINE_8)
+        cv2.polylines(mask, [contour], True, 255, thickness, lineType=cv2.LINE_8)
         seed = (step["fill_point"][0]-x0, step["fill_point"][1]-y0)
         if not (1 <= seed[0] < width-1 and 1 <= seed[1] < height-1):
             raise ValueError(f'{step["name"]}: fill seed outside mapped contour')
@@ -239,7 +239,7 @@ class DrawingEngine:
                     # The contour must be closed in the rasterized geometry.
                     try:
                         self.verify_fill_boundary({"name": name, "points": points,
-                                                   "fill_point": [x, y]})
+                                                   "fill_point": [x, y]}, thickness=2)
                     except ValueError as exc:
                         raise RuntimeError(f'{name}: unsafe binary contour: {exc}') from exc
                     guard = (300, 148)
