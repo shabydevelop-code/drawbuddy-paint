@@ -222,18 +222,40 @@ class DrawingEngine:
                 name, tool = step['name'], step['tool']
                 if tool == 'binary_region':
                     print(f'\\n{index}/{len(steps)} {name}: filled {step["color"]} region')
+                    # Never bucket-fill without checking the physical Paint
+                    # outline. A leak can otherwise paint the entire canvas.
                     self.tools.select('pencil')
                     self.colors.select_primary(step['color'])
                     self.stroke_size.select(2)
                     points = step['points'] + [step['points'][0]]
+                    self.paint.validate_canvas_points(points)
                     self.canvas.stroke(points)
+                    x, y = step['fill_point']
+                    # The contour must be closed in the rasterized geometry.
+                    try:
+                        self.verify_fill_boundary({"name": name, "points": points,
+                                                   "fill_point": [x, y]})
+                    except ValueError as exc:
+                        raise RuntimeError(f'{name}: unsafe binary contour: {exc}') from exc
+                    guard = (300, 148)
+                    before_guard = self.canvas.sample(*guard)
+                    if not self.color_matches(before_guard, (255, 255, 255), tolerance=12):
+                        raise RuntimeError(f'{name}: white background guard is not white: {before_guard}')
+                    before_seed = self.canvas.sample(x, y)
+                    if self.color_matches(before_seed, RGB[step['color']], tolerance=12):
+                        print(f'  SKIP bucket: seed already {step["color"]}')
+                        continue
                     self.tools.select('bucket')
                     self.colors.select_primary(step['color'])
-                    x, y = step['fill_point']
                     self.canvas.fill(x, y)
                     actual = self.canvas.sample(x, y)
+                    after_guard = self.canvas.sample(*guard)
+                    if not self.color_matches(after_guard, before_guard, tolerance=12):
+                        self.paint.press('ctrl+z')
+                        raise RuntimeError(f'{name}: bucket leaked outside contour; fill undone')
                     if not self.color_matches(actual, RGB[step['color']], tolerance=20):
-                        raise RuntimeError(f'{name}: bucket fill verification failed: {actual}')
+                        self.paint.press('ctrl+z')
+                        raise RuntimeError(f'{name}: bucket fill verification failed: {actual}; fill undone')
                     continue
                 if tool == 'brush_paths':
                     print(f'\\n{index}/{len(steps)} {name}: {len(step["paths"])} brush paths')
