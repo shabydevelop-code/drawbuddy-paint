@@ -157,9 +157,13 @@ def main():
     parser.add_argument("drawing", type=Path,
                         nargs="?", default=Path("drawings/dog.json"))
     parser.add_argument('--output', type=Path, default=Path('output/fill-diagnostic.png'))
+    parser.add_argument('--publish-diagnostic', action='store_true', help='Push diagnostic image to GitHub after generating it')
     args = parser.parse_args()
     drawing = json.loads(args.drawing.read_text(encoding="utf-8"))
     FillRegionValidator().report(args.reference, drawing, args.output)
+    if args.publish_diagnostic:
+        from drawbuddy.result_publisher import ResultPublisher
+        ResultPublisher(Path(__file__).resolve().parent).publish_file(args.output)
 
 
 if __name__ == "__main__":
