@@ -67,7 +67,7 @@ def compare_paint_canvas(paint, reference_path, width, height, left, top,
     report, max_channel, mask = compare(reference, actual, tolerance)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    heatmap = cv2.applyColorMap(max_channel, cv2.COLORMAP_JET)
+    heatmap = cv2.applyColorMap(max_channel.astype(np.uint8), cv2.COLORMAP_JET)
     heatmap[mask == 0] = (0, 0, 0)
     overlay = cv2.cvtColor(actual, cv2.COLOR_RGB2BGR).copy()
     overlay[mask != 0] = (0, 0, 255)
@@ -105,7 +105,7 @@ def main():
         actual = actual[y:y + height, x:x + width]
     report, max_channel, mask = compare(reference, actual, args.tolerance)
     args.output.mkdir(parents=True, exist_ok=True)
-    heatmap = cv2.applyColorMap(max_channel, cv2.COLORMAP_JET)
+    heatmap = cv2.applyColorMap(max_channel.astype(np.uint8), cv2.COLORMAP_JET)
     heatmap[mask == 0] = (0, 0, 0)
     overlay = cv2.cvtColor(actual, cv2.COLOR_RGB2BGR).copy()
     overlay[mask != 0] = (0, 0, 255)
