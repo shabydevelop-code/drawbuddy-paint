@@ -109,39 +109,47 @@ class PaintController:
 
     @staticmethod
     def stroke_delay(previous, current, following, speed, base_duration):
-        """Pace corners and short details, while accelerating long straight runs.
+        """Target event spacing based on local path geometry.
 
-        A small timing floor around corners gives Paint time to sample mouse
-        motion. Straight segments retain the requested speed multiplier.
+        Tiny facial features and sharp turns need more Paint sampling time.
+        Long straight runs can move much faster. The minimum interval is
+        deliberately independent of extreme speed multipliers.
         """
         if following is None:
-            return max(base_duration / speed, 0.001)
+            return max(base_duration / speed, 0.002)
         ax, ay = current[0] - previous[0], current[1] - previous[1]
         bx, by = following[0] - current[0], following[1] - current[1]
-        alen = math.hypot(ax, ay)
-        blen = math.hypot(bx, by)
+        alen, blen = math.hypot(ax, ay), math.hypot(bx, by)
         if alen < 0.01 or blen < 0.01:
-            return max(base_duration / speed, 0.0008)
+            return max(base_duration / speed, 0.002)
         cosine = max(-1.0, min(1.0, (ax * bx + ay * by) / (alen * blen)))
         turn = 1.0 - cosine
-        if turn > 0.35:
-            floor = 0.002
-        elif turn > 0.08:
-            floor = 0.0012
-        elif alen <= 2.0 and blen <= 2.0:
-            floor = 0.0007
+        if turn > 0.25:
+            floor = 0.004
+        elif turn > 0.055 or (alen <= 2 and blen <= 2):
+            floor = 0.0025
         else:
-            floor = 0.0
+            floor = 0.001
         return max(base_duration / speed, floor)
 
+    @staticmethod
+    def wait_until(deadline):
+        """Use a monotonic clock rather than inaccurate sub-ms sleep calls."""
+        while True:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                return
+            if remaining > 0.003:
+                time.sleep(remaining - 0.001)
+
     def stroke(self, points, duration=0.008):
-        """Adaptive Pencil pacing: faster straights, more time for tight turns."""
+        """Pace every mouse event by geometry and elapsed time, never skip points."""
         if len(points) < 2:
             raise ValueError('Stroke requires at least two points')
         self.validate_canvas_points(points)
         self.activate()
         print(f'  ACTION stroke points={len(points)} speed={self.drawing_speed:g}x '
-              'adaptive_corner_pacing=on')
+              'geometry_pacing=on')
         pg.moveTo(*self.point(*points[0]), duration=0)
         old_pause, old_min = pg.PAUSE, pg.MINIMUM_DURATION
         pg.PAUSE, pg.MINIMUM_DURATION = 0, 0
@@ -155,8 +163,7 @@ class PaintController:
                     delay = self.stroke_delay(
                         points[i - 1], points[i], following,
                         self.drawing_speed, duration)
-                    if delay:
-                        time.sleep(delay)
+                    self.wait_until(time.perf_counter() + delay)
             finally:
                 pg.mouseUp(button='left')
         finally:
