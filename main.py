@@ -157,8 +157,12 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     print('Scene path validation:', json.dumps(report, indent=2))
     if out_of_bounds:
         raise RuntimeError('Scene path validation FAILED: out-of-bounds motion')
+    retained_ratio = len(plan) / len(selected_paths)
+    if retained_ratio < 0.05:
+        print(f'FAIL: only {retained_ratio:.2%} of source paths survived planning; Paint drawing blocked.')
+        raise RuntimeError('Scene planning lost nearly all source geometry; do not draw sparse dots')
     if validate_only:
-        print('PASS: planned Paint paths stay in bounds; contour intersections are allowed.')
+        print('PASS: planned Paint paths stay in bounds and retain sufficient source paths.')
         return
     engine = DrawingEngine(speed=speed)
     # Validate every planned position before touching the Paint canvas.
