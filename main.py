@@ -457,7 +457,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
 
 
 
-def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None):
+def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None, color_test=False):
     """Validate a 16-color pixel plan; draw only with explicit opt-in.
 
     Coordinates are local to the image, anchored to a safe Paint canvas area.
@@ -475,6 +475,7 @@ def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None):
         raise ValueError('--paint-plan-limit must be positive')
     left, top = 250 + (300 - width) // 2, 155 + (328 - height) // 2
     work = []
+    color_samples = []
     seen_colors = set()
     for group in groups:
         color = group.get('rgb')
@@ -493,6 +494,7 @@ def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None):
             raise ValueError('Invalid plan group')
         if group['background'] and strokes:
             raise ValueError('Background group must have no strokes')
+        group_work = []
         for stroke in strokes:
             if (not isinstance(stroke, list) or len(stroke) != 4
                     or any(type(v) is not int for v in stroke)):
@@ -501,8 +503,18 @@ def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None):
             if not (0 <= x0 <= x1 < width and 0 <= y0 == y1 < height):
                 raise ValueError('Stroke outside pixel plan')
             if not group['background']:
-                work.append((rgb, (left + x0, left + x1, top + y0)))
-    if max_strokes is not None:
+                run = (rgb, (left + x0, left + x1, top + y0))
+                work.append(run)
+                group_work.append(run)
+        if group_work:
+            color_samples.append((rgb, group_work))
+    if color_test:
+        if len(color_samples) < 3:
+            raise ValueError('Color test requires at least three drawable colors')
+        work = [stroke for _, sample in color_samples[:3] for stroke in sample[:3]]
+        print('COLOR TEST: three strokes from each of three different RGB colors: '
+              + ', '.join('#%02X%02X%02X' % rgb for rgb, _ in color_samples[:3]))
+    elif max_strokes is not None:
         work = work[:max_strokes]
     print(f'16-color plan validated: {width}x{height}; '
           f'{len(work):,} horizontal strokes selected; origin=({left},{top})')
@@ -533,6 +545,7 @@ def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None):
 def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
     parser.add_argument('--paint-plan', type=Path, help='Validate or draw a 16-color pixel stroke plan')
+    parser.add_argument('--paint-plan-color-test', action='store_true', help='Draw 3 strokes from each of 3 different plan colors')
     parser.add_argument('--paint-plan-execute', action='store_true', help='Actually draw the pixel plan in Paint (uses Edit Colors)')
     parser.add_argument('--paint-plan-limit', type=int, default=None, help='Limit pixel strokes for a Paint smoke test')
     parser.add_argument('--scene-strokes', type=Path, help='Draw Scene Engine ink-strokes.json in Paint (experimental)')
@@ -568,10 +581,15 @@ def main():
         speed = args.speed if args.speed is not None else config.get('drawing_speed', 1.0)
         if type(speed) not in (float, int) or not math.isfinite(speed) or not 0 < speed <= 100:
             parser.error('drawing speed must be greater than 0 and at most 100')
+        if args.paint_plan_color_test and args.paint_plan_limit is not None:
+            parser.error('--paint-plan-color-test cannot be combined with --paint-plan-limit')
+        if args.paint_plan_color_test and not args.paint_plan_execute:
+            parser.error('--paint-plan-color-test requires --paint-plan-execute')
         execute_pixel_paint_plan(args.paint_plan, float(speed),
-                                 args.paint_plan_execute, args.paint_plan_limit)
+                                 args.paint_plan_execute, args.paint_plan_limit,
+                                 args.paint_plan_color_test)
         return
-    if args.paint_plan_execute or args.paint_plan_limit is not None:
+    if args.paint_plan_execute or args.paint_plan_color_test or args.paint_plan_limit is not None:
         parser.error('--paint-plan-execute and --paint-plan-limit require --paint-plan')
     if args.scene_strokes:
         if args.drawing or any((args.region_draw_source, args.region_source,
