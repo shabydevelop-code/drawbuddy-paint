@@ -111,9 +111,44 @@ class ColorRegionSegmenter:
                                    colors[right[ys, xs]], axis=1)
             strong = delta >= self.min_color_distance
             boundaries[ys[strong], xs[strong]] = 1
-        # The black contour extractor already handles ink boundaries.
-        # Reject boundaries near existing ink, including its anti-aliased rim.\n        exclusion = cv2.dilate(ink_mask.astype(np.uint8),\n                               cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (13, 13)))\n        boundaries[exclusion > 0] = 0
+        # Reject color boundaries near black ink, including anti-aliased edges.
+        # This mask is used only for new color boundaries; ink is untouched.
+        distance = cv2.distanceTransform(
+            (ink_mask == 0).astype(np.uint8), cv2.DIST_L2, 5)
+        boundaries[distance < 11.0] = 0
         return boundaries, region_count
+
+
+class ColorPathOverlapFilter:
+    """Reject color contours that duplicate the original black linework."""
+
+    def __init__(self, min_length=24, near_distance=19, max_overlap=0.22):
+        self.min_length = min_length
+        self.near_distance = near_distance
+        self.max_overlap = max_overlap
+
+    def filter(self, paths, ink_mask):
+        distance = cv2.distanceTransform(
+            (ink_mask == 0).astype(np.uint8), cv2.DIST_L2, 5)
+        h, w = ink_mask.shape
+        accepted = []
+        for path in paths:
+            if len(path) < 3:
+                continue
+            if cv2.arcLength(np.asarray(path, dtype=np.int32), False) < self.min_length:
+                continue
+            # Sample each segment, not just its simplified vertices.
+            raster = np.zeros((h, w), dtype=np.uint8)
+            for start, end in zip(path, path[1:]):
+                cv2.line(raster, tuple(map(int, start)),
+                         tuple(map(int, end)), 1, 1)
+            values = distance[raster > 0]
+            if not len(values):
+                continue
+            if float(np.mean(values < self.near_distance)) > self.max_overlap:
+                continue
+            accepted.append(path)
+        return accepted
 
 
 class ZhangSuenThinner:
@@ -223,6 +258,7 @@ class ReferenceTracingPipeline:
     def __init__(self, threshold=95, min_length=2):
         self.ink = InkMask(threshold)
         self.color_regions = ColorRegionSegmenter()
+        self.color_filter = ColorPathOverlapFilter()
         self.thinner = ZhangSuenThinner()
         self.tracer = SkeletonPathTracer(min_length)
         self.mapper = PaintCanvasMapper()
@@ -231,13 +267,8 @@ class ReferenceTracingPipeline:
         mask = self.ink.from_image(source)
         paths = self.tracer.trace(self.thinner.thin(mask))
         color_mask, region_count = self.color_regions.extract(source, mask)
-        # Filter only added color boundaries; keep small black eye details.
         raw_color_paths = self.tracer.trace(self.thinner.thin(color_mask))
-        color_paths = [
-            p for p in raw_color_paths
-            if len(p) >= 3
-            and cv2.arcLength(np.asarray(p, dtype=np.int32), False) >= 24
-        ]
+        color_paths = self.color_filter.filter(raw_color_paths, mask)
         if not paths:
             raise ValueError("No ink paths found")
         # Map all paths together so the original and color edges align.
