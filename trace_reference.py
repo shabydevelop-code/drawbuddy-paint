@@ -588,75 +588,103 @@ def raster_drawing(source, output, pixel_step=2):
 
 
 def vector_painter(source, output):
-    """Region-based brush coverage followed by original vector-like ink strokes.
+    """Convert indexed color masks into contour-following brush paths.
 
-    This is a brush-stroke approximation, not an SVG renderer. No bucket fills.
+    Each mask is decomposed into connected regions, then inward offset curves.
+    This is geometry-based painting, not horizontal raster scanning or buckets.
     """
     from drawbuddy.components import RGB
     image = cv2.imread(str(source), cv2.IMREAD_COLOR)
     if image is None:
         raise FileNotFoundError(source)
     h, w = image.shape[:2]
-    scale = min(520 / w, 365 / h)
-    target_w, target_h = max(1, round(w * scale)), max(1, round(h * scale))
-    reduced = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
-    rgb = cv2.cvtColor(reduced, cv2.COLOR_BGR2RGB).astype(np.int16)
-    left = 310 + (520 - target_w) // 2
-    top = 155 + (365 - target_h) // 2
-    # Paint's size-4 pencil is a broad stroke. Erode coverage so that it
-    # stays inside the color region and the fine contours remain visible.
-    brush_width = 4
-    row_stride = 5
-    palette = np.array(list(RGB.values()), dtype=np.int16)
+    # Analyze at a fixed working resolution to reduce jagged color interfaces.
+    factor = min(1.0, 420.0 / max(h, w))
+    rw, rh = max(1, round(w * factor)), max(1, round(h * factor))
+    reduced = cv2.resize(image, (rw, rh), interpolation=cv2.INTER_AREA)
+    smooth = cv2.bilateralFilter(reduced, 7, 32, 32)
+    rgb = cv2.cvtColor(smooth, cv2.COLOR_BGR2RGB).astype(np.int16)
     names = list(RGB)
-    diff = np.max(np.abs(rgb[:, :, None, :] - palette[None, None, :, :]), axis=3)
+    palette = np.asarray(list(RGB.values()), dtype=np.int16)
+    distances = np.max(np.abs(rgb[:, :, None, :] - palette[None, None, :, :]), axis=3)
     nearest = np.argmin(np.sum((rgb[:, :, None, :] - palette[None, None, :, :]) ** 2, axis=3), axis=2)
-    valid = np.min(diff, axis=2) <= 65
+    valid = np.min(distances, axis=2) <= 65
     dark = np.max(rgb, axis=2) < 100
     nearest[dark] = names.index("black")
     valid |= dark
-    brush_steps = []
+
+    # Preserve original established ink/edge tracing. All geometry uses ONE
+    # coordinate transform, so color paths cannot drift relative to outlines.
+    tracer = ReferenceTracingPipeline()
+    ink = tracer.ink.from_image(source)
+    ink_paths = tracer.tracer.trace(tracer.thinner.thin(ink))
+    edge_mask, _ = tracer.color_regions.extract(source, ink)
+    color_paths = tracer.color_filter.filter(
+        tracer.tracer.trace(tracer.thinner.thin(edge_mask)), ink)
+    original_paths = ink_paths + color_paths
+    if not original_paths:
+        raise ValueError("No reference contours detected")
+
+    raw_brush = []
+    # Each erosion ring follows the actual boundary of a region. The broad
+    # pencil covers the gap between successive rings; no row-by-row passes.
     for index, name in enumerate(names):
         if name == "black":
             continue
         mask = ((nearest == index) & valid).astype(np.uint8)
-        # Filter speckle islands; retain contiguous source-derived shapes.
-        count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        count, components, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
         clean = np.zeros_like(mask)
-        for region in range(1, count):
-            if stats[region, cv2.CC_STAT_AREA] >= 24:
-                clean[labels == region] = 1
-        interior = cv2.erode(clean, np.ones((5, 5), np.uint8), iterations=1)
-        paths = []
-        for y in range(2, target_h - 2, row_stride):
-            x = 0
-            while x < target_w:
-                if not interior[y, x]:
-                    x += 1
+        for component in range(1, count):
+            if stats[component, cv2.CC_STAT_AREA] >= 35:
+                clean[components == component] = 255
+        # The first ring is inset from color boundaries to preserve linework.
+        remaining = cv2.erode(clean, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+        rings = 0
+        while np.any(remaining):
+            contours, _ = cv2.findContours(remaining, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+            for contour in contours:
+                if cv2.arcLength(contour, True) < 12:
                     continue
-                start = x
-                while x + 1 < target_w and interior[y, x + 1]:
-                    x += 1
-                if x - start >= 3:
-                    paths.append([[left + start, top + y], [left + x, top + y]])
-                x += 1
-        for start in range(0, len(paths), 100):
-            brush_steps.append({
-                "name": f"Brush {name} {start // 100 + 1:03d}",
-                "tool": "brush_paths", "color": name, "width": brush_width,
-                "paths": paths[start:start + 100]})
-        print(f"Brush {name}: {len(paths)} region-interior paths")
-    # Preserve the established contour extraction, independent of color coverage.
-    ReferenceTracingPipeline().run(source, output)
-    original = json.loads(output.read_text(encoding="utf-8"))
-    steps = brush_steps + original["steps"]
+                simplified = cv2.approxPolyDP(contour, 0.65, True).reshape(-1, 2)
+                if len(simplified) < 3:
+                    continue
+                points = [[int(round(x / factor)), int(round(y / factor))]
+                          for x, y in simplified]
+                if len(set(map(tuple, points))) >= 3:
+                    raw_brush.append((name, points + [points[0]]))
+            remaining = cv2.erode(
+                remaining, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+            rings += 1
+        print(f"Painter {name}: {rings} inward contour layers")
+
+    all_paths = original_paths + [points for _, points in raw_brush]
+    mapped = tracer.mapper.map(all_paths)
+    mapped_original = mapped[:len(original_paths)]
+    mapped_brush = mapped[len(original_paths):]
+    steps = []
+    for name in names:
+        if name == "black":
+            continue
+        paths = [points for (color, _), points in zip(raw_brush, mapped_brush)
+                 if color == name and len(set(map(tuple, points))) >= 3]
+        for start in range(0, len(paths), 80):
+            steps.append({"name": f"Contour brush {name} {start // 80 + 1:03d}",
+                          "tool": "brush_paths", "color": name, "width": 4,
+                          "paths": paths[start:start + 80]})
+        print(f"Painter {name}: {len(paths)} curved brush paths")
+    for i, points in enumerate(mapped_original):
+        if len(set(map(tuple, points))) >= 2:
+            steps.append({"name": f"Final outline {i+1:03d}", "tool": "stroke",
+                          "color": "black", "smooth": False, "width": 1,
+                          "points": points})
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({
-        "name": f"Vector-style painter from {source.name}",
-        "steps": steps,
-        "painter": {"method": "region brush strokes + contour pass",
-                    "palette": names, "brush_width": brush_width}
+        "name": f"Contour painter from {source.name}", "steps": steps,
+        "painter": {"method": "connected color masks -> inward contour brush loops -> ink",
+                    "palette": names, "working_resolution": [rw, rh]}
     }, indent=2), encoding="utf-8")
-    print(f"Created {output}: {len(brush_steps)} brush batches + {len(original['steps'])} contour paths")
+    print(f"Created {output}: {len(steps)} drawing steps; no raster scanlines or bucket")
+
 
 
 def main():
@@ -667,7 +695,7 @@ def main():
     parser.add_argument("--min-length", type=int, default=2)
     parser.add_argument("--fill-solid-ink", action="store_true", help="Include isolated closed solid ink regions; excludes holes and connected outlines")
     parser.add_argument("--region-map", action="store_true", help="Store recolored connected regions and original RGB in JSON metadata")
-    parser.add_argument("--vector-painter", action="store_true", help="Paint region interiors with broad brush strokes, then restore ink contours")
+    parser.add_argument("--vector-painter", action="store_true", help="Trace nested region contours with broad brush strokes, then restore ink outlines")
     parser.add_argument("--raster", action="store_true", help="Draw indexed pixel masks as horizontal Paint strokes, without bucket fills")
     parser.add_argument("--pixel-step", type=int, choices=(1, 2, 3), default=2)
     parser.add_argument("--paint-fills", action="store_true", help="Generate safe fills for calibrated Paint colors before original strokes")
