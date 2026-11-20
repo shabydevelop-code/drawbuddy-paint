@@ -1,10 +1,9 @@
 """Optimize the existing 0/1/color map into continuous pencil paths.
 
-Four-connected pixel paths never cross a different-color pixel. Every
+Eight-connected pixel paths join same-color diagonal neighbors. Every
 connected component is covered in one mouse-down stroke, with backtracking
 inside already-painted pixels when necessary.
 """
-from collections import deque
 import numpy as np
 from .binary_painter import build_color_raster_drawing
 
@@ -13,8 +12,10 @@ def _continuous_paths(mask, left, top):
     h, w = mask.shape
     visited = np.zeros((h, w), dtype=np.uint8)
     paths = []
-    # Neighbor preference favors horizontal motion, then vertical.
-    neighbors = ((1, 0), (-1, 0), (0, 1), (0, -1))
+    # Include diagonal neighbors: fewer disconnected islands and pencil lifts.
+    # Every endpoint is an actual same-color pixel; no off-mask bridges.
+    neighbors = ((1, 0), (-1, 0), (0, 1), (0, -1),
+                 (1, 1), (-1, -1), (1, -1), (-1, 1))
     for sy in range(h):
         for sx in range(w):
             if not mask[sy, sx] or visited[sy, sx]:
@@ -24,7 +25,7 @@ def _continuous_paths(mask, left, top):
             stack = [(sx, sy, 0)]
             while stack:
                 x, y, direction = stack[-1]
-                if direction == 4:
+                if direction == len(neighbors):
                     stack.pop()
                     if stack:
                         route.append((stack[-1][0], stack[-1][1]))
