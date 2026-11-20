@@ -11,6 +11,7 @@ class UIElement:
 ELEMENTS = {
     'color_1': UIElement('color_1', 689, 70, 'Primary color selector'),
     'color_2': UIElement('color_2', 731, 70, 'Secondary color selector'),
+    'white': UIElement('white', 762, 84, 'White palette swatch'),
     'black': UIElement('black', 762, 62, 'Black palette swatch'),
     'orange': UIElement('orange', 851, 62, 'Orange palette swatch'),
     'brown': UIElement('brown', 807, 84, 'Brown palette swatch'),
