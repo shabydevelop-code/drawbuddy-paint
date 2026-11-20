@@ -289,9 +289,17 @@ def export_strokes(ink, centerline, output):
     diff[(ink == 0) & (rebuilt != 0)] = (0, 0, 255)
     cv2.imwrite(str(out / 'stroke-difference.png'),
                 cv2.cvtColor(diff, cv2.COLOR_RGB2BGR))
+    # Lossless source-ink horizontal runs for Paint fill correction.
+    # Centerlines alone cannot reproduce solid spots or heavy mouth strokes.
+    ink_runs = []
+    for y, row in enumerate(ink):
+        starts = np.flatnonzero((row != 0) & (np.r_[0, row[:-1]] == 0))
+        ends = np.flatnonzero((row != 0) & (np.r_[row[1:], 0] == 0))
+        ink_runs.extend([int(y), int(a), int(b)] for a, b in zip(starts, ends))
     (out / 'ink-strokes.json').write_text(
         json.dumps({'width': int(ink.shape[1]), 'height': int(ink.shape[0]),
-                    'paths': records}, separators=(',', ':')), encoding='utf-8')
+                    'paths': records, 'ink_runs': ink_runs},
+                   separators=(',', ':')), encoding='utf-8')
     report = {'original_strokes': len(original_paths),
               'joined_strokes': len(paths),
               'baseline_iou': round(baseline_iou, 6),
@@ -303,6 +311,7 @@ def export_strokes(ink, centerline, output):
               'recovered_ink_pixels': recovered_pixels,
               'pre_supplemental_iou': round(before_segments_iou, 6),
               'supplemental_strokes': supplemental_strokes,
+              'source_ink_runs': len(ink_runs),
               'strokes': len(records),
               'stroke_points': sum(len(p['points']) for p in records),
               'reconstruction_iou': round(iou, 6),
