@@ -228,7 +228,7 @@ def map_sixteen_to_paint(rgb, output):
 def export_paint_plan_16(rgb, output):
     """Plan horizontal Paint strokes, grouped by 16 image-derived colors.
 
-    Coordinates are relative to the 300x328 image; no screen clicks are made.
+    Coordinates are relative to the requested image dimensions; no screen clicks are made.
     White is treated as a prefilled canvas, so only non-background runs draw.
     """
     pixels = rgb.reshape(-1, 3).astype(np.float32)
@@ -285,7 +285,7 @@ def export_paint_plan_16(rgb, output):
     print('Paint palette NOT calibrated; drawing engine unchanged.')
 
 
-def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_palette_16=False, palette_7=False, compare_palettes=False, map_paint_16=False, paint_plan_16=False):
+def build_pixel_map(source, output, width=500, height=547, grid_scale=4, paint_palette_16=False, palette_7=False, compare_palettes=False, map_paint_16=False, paint_plan_16=False):
     if width < 1 or height < 1 or grid_scale < 1:
         raise ValueError('Dimensions and grid scale must be positive')
     source = Path(source)
@@ -356,8 +356,8 @@ def main():
     parser = argparse.ArgumentParser(description='Build a full-color pixel map')
     parser.add_argument('source', nargs='?', default='assets/dog-reference.png')
     parser.add_argument('--output', default='output/pixel-map/pixel-map.json')
-    parser.add_argument('--width', type=int, default=300)
-    parser.add_argument('--height', type=int, default=328)
+    parser.add_argument('--width', type=int, default=500)
+    parser.add_argument('--height', type=int, default=547)
     parser.add_argument('--grid-scale', type=int, default=4)
     parser.add_argument('--paint-palette-16', action='store_true',
                         help='Export comparison using 16 fixed Paint-style colors')
