@@ -51,6 +51,39 @@ def compare(reference, actual, tolerance=12):
     }, max_channel, error_mask
 
 
+def compare_paint_canvas(paint, reference_path, width, height, left, top,
+                         output=Path("output/comparison"), tolerance=12):
+    """Capture the exact drawing rectangle from Paint and compare it."""
+    import pyautogui as pg
+
+    reference = load_rgb(reference_path)
+    if reference.shape[:2] != (height, width):
+        raise ValueError("Reference dimensions do not match planned Paint drawing")
+    x, y = paint.point(left, top)
+    screenshot = pg.screenshot()
+    if x < 0 or y < 0 or x + width > screenshot.width or y + height > screenshot.height:
+        raise RuntimeError("Paint comparison crop falls outside the display")
+    actual = np.asarray(screenshot.crop((x, y, x + width, y + height)).convert("RGB"))
+    report, max_channel, mask = compare(reference, actual, tolerance)
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    heatmap = cv2.applyColorMap(max_channel, cv2.COLORMAP_JET)
+    heatmap[mask == 0] = (0, 0, 0)
+    overlay = cv2.cvtColor(actual, cv2.COLOR_RGB2BGR).copy()
+    overlay[mask != 0] = (0, 0, 255)
+    cv2.imwrite(str(output / "error-heatmap.png"), heatmap)
+    cv2.imwrite(str(output / "error-overlay.png"), overlay)
+    cv2.imwrite(str(output / "actual-crop.png"), cv2.cvtColor(actual, cv2.COLOR_RGB2BGR))
+    (output / "report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    print("Paint comparison: exact match = "
+          f"{report['exact_pixel_match_percent']}%, "
+          f"within tolerance = {report['within_tolerance_percent']}%")
+    print("Comparison files:", output)
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compare a Paint result against its source pixels.")
     parser.add_argument("--reference", type=Path, required=True)
