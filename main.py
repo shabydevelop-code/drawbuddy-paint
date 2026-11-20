@@ -249,12 +249,27 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             ordered.append((size, points))
             cursor = points[-1]
     plan = ordered
-    # One calibrated pencil width for the entire scene: avoid ribbon
-    # interactions between contours. Preserve the existing natural paths.
-    plan = [(2, points) for _, points in plan]
+    # First pass: preserve every fine contour with the smallest pencil.
+    # Second pass: retrace only substantial source-thick portions with
+    # pencil size 3. Exactly one width change between the two passes.
+    base_plan = [(1, points) for _, points in plan]
+    heavy_plan = []
+    for _, points in base_plan:
+        run = []
+        for point in points:
+            if pixel_sizes.get(tuple(point), 1) >= 3:
+                if not run or run[-1] != point:
+                    run.append(point)
+            else:
+                if len(run) >= 5:
+                    heavy_plan.append((3, run))
+                run = []
+        if len(run) >= 5:
+            heavy_plan.append((3, run))
+    plan = base_plan + heavy_plan
     width_merged_trails = 0
-    width_switches_estimate = 0
-    thickness_paths = []
+    width_switches_estimate = int(bool(heavy_plan))
+    thickness_paths = heavy_plan
     fill_paths = []
     missing_fill_pixels = 0
     repair_components = 0
@@ -291,7 +306,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
               'solid_ink_repair_components': repair_components,
               'source_ink_run_data_available': source_ink_runs is not None,
               'variable_pencil_widths_enabled': True,
-              'width_levels_used': [2],
+              'width_levels_used': [1, 3] if heavy_plan else [1],
               'same_width_trails_merged': width_merged_trails,
               'estimated_pencil_size_changes': width_switches_estimate,
               'canvas_resolution': [dest_w, dest_h],
@@ -338,11 +353,11 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     # Calibrated pencil sizes 1..4; change only between complete gestures.
     import time
     import ctypes
-    engine.stroke_size.select(2)
     engine.tools.pencil.click()
+    engine.stroke_size.select(1)
     engine.tools.current = 'pencil'
     time.sleep(0.6)
-    print('Scene Paint uses constant Pencil size 2; no width changes during drawing.')
+    print(f'Scene Paint: fine contours first, then {len(heavy_plan)} heavy accents; at most one width change.')
 
     def wait_for_resume():
         # controller.stroke releases mouseUp in its finally clause before
@@ -357,7 +372,11 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             time.sleep(0.05)
         print('RESUMED.')
 
+    current_width = 1
     for index, (size, points) in enumerate(plan, 1):
+        if size != current_width:
+            engine.stroke_size.select(size)
+            current_width = size
         while True:
             try:
                 from drawbuddy.controller import check_cancel
