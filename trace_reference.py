@@ -588,102 +588,107 @@ def raster_drawing(source, output, pixel_step=2):
 
 
 def vector_painter(source, output):
-    """Convert indexed color masks into contour-following brush paths.
+    """Build solid-fill Paint actions from connected 0/1 color regions.
 
-    Each mask is decomposed into connected regions, then inward offset curves.
-    This is geometry-based painting, not horizontal raster scanning or buckets.
+    Only simply-connected regions are filled: holes and unsafe boundaries are
+    excluded rather than risking a Paint bucket leak. Ink contours come last.
     """
     from drawbuddy.components import RGB
+    from drawbuddy.drawing_engine import DrawingEngine
     image = cv2.imread(str(source), cv2.IMREAD_COLOR)
     if image is None:
         raise FileNotFoundError(source)
     h, w = image.shape[:2]
-    # Analyze at a fixed working resolution to reduce jagged color interfaces.
-    factor = min(1.0, 420.0 / max(h, w))
-    rw, rh = max(1, round(w * factor)), max(1, round(h * factor))
-    reduced = cv2.resize(image, (rw, rh), interpolation=cv2.INTER_AREA)
-    smooth = cv2.bilateralFilter(reduced, 7, 32, 32)
+    smooth = cv2.pyrMeanShiftFiltering(image, 8, 16)
     rgb = cv2.cvtColor(smooth, cv2.COLOR_BGR2RGB).astype(np.int16)
     names = list(RGB)
     palette = np.asarray(list(RGB.values()), dtype=np.int16)
-    distances = np.max(np.abs(rgb[:, :, None, :] - palette[None, None, :, :]), axis=3)
+    difference = np.max(np.abs(rgb[:, :, None, :] - palette[None, None, :, :]), axis=3)
     nearest = np.argmin(np.sum((rgb[:, :, None, :] - palette[None, None, :, :]) ** 2, axis=3), axis=2)
-    valid = np.min(distances, axis=2) <= 65
+    valid = np.min(difference, axis=2) <= 65
     dark = np.max(rgb, axis=2) < 100
     nearest[dark] = names.index("black")
     valid |= dark
 
-    # Preserve original established ink/edge tracing. All geometry uses ONE
-    # coordinate transform, so color paths cannot drift relative to outlines.
     tracer = ReferenceTracingPipeline()
     ink = tracer.ink.from_image(source)
     ink_paths = tracer.tracer.trace(tracer.thinner.thin(ink))
-    edge_mask, _ = tracer.color_regions.extract(source, ink)
+    boundaries, _ = tracer.color_regions.extract(source, ink)
     color_paths = tracer.color_filter.filter(
-        tracer.tracer.trace(tracer.thinner.thin(edge_mask)), ink)
+        tracer.tracer.trace(tracer.thinner.thin(boundaries)), ink)
     original_paths = ink_paths + color_paths
     if not original_paths:
         raise ValueError("No reference contours detected")
 
-    raw_brush = []
-    # Each erosion ring follows the actual boundary of a region. The broad
-    # pencil covers the gap between successive rings; no row-by-row passes.
+    candidates = []
     for index, name in enumerate(names):
         if name == "black":
             continue
-        mask = ((nearest == index) & valid).astype(np.uint8)
-        count, components, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
-        clean = np.zeros_like(mask)
+        binary = ((nearest == index) & valid).astype(np.uint8)
+        count, components, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
         for component in range(1, count):
-            if stats[component, cv2.CC_STAT_AREA] >= 35:
-                clean[components == component] = 255
-        # The first ring is inset from color boundaries to preserve linework.
-        remaining = cv2.erode(clean, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
-        rings = 0
-        while np.any(remaining):
-            contours, _ = cv2.findContours(remaining, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-            for contour in contours:
-                if cv2.arcLength(contour, True) < 12:
+            if stats[component, cv2.CC_STAT_AREA] < 110:
+                continue
+            component_mask = np.uint8(components == component)
+            contours, hierarchy = cv2.findContours(
+                component_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+            if hierarchy is None:
+                continue
+            for ci, entry in enumerate(hierarchy[0]):
+                if entry[3] != -1 or entry[2] != -1:
+                    continue  # No holes; never fill across a white island.
+                contour = contours[ci]
+                if cv2.contourArea(contour) < 110:
                     continue
-                simplified = cv2.approxPolyDP(contour, 0.65, True).reshape(-1, 2)
-                if len(simplified) < 3:
+                points = cv2.approxPolyDP(contour, 0.55, True).reshape(-1, 2)
+                if len(points) < 3:
                     continue
-                points = [[int(round(x / factor)), int(round(y / factor))]
-                          for x, y in simplified]
-                if len(set(map(tuple, points))) >= 3:
-                    raw_brush.append((name, points + [points[0]]))
-            remaining = cv2.erode(
-                remaining, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
-            rings += 1
-        print(f"Painter {name}: {rings} inward contour layers")
+                dist = cv2.distanceTransform(component_mask, cv2.DIST_L2, 5)
+                _, radius, _, seed = cv2.minMaxLoc(dist)
+                if radius < 3:
+                    continue
+                candidates.append((name, points.tolist(), [int(seed[0]), int(seed[1])]))
 
-    all_paths = original_paths + [points for _, points in raw_brush]
+    # A single mapping transform is essential for fills and final ink.
+    all_paths = original_paths + [c[1] for c in candidates] + [[c[2]] for c in candidates]
     mapped = tracer.mapper.map(all_paths)
-    mapped_original = mapped[:len(original_paths)]
-    mapped_brush = mapped[len(original_paths):]
+    outlines = mapped[:len(original_paths)]
+    start = len(original_paths)
+    regions = mapped[start:start + len(candidates)]
+    seeds = mapped[start + len(candidates):]
     steps = []
-    for name in names:
-        if name == "black":
+    rejected = 0
+    for i, ((name, _, _), polygon, seed) in enumerate(zip(candidates, regions, seeds), 1):
+        if len(set(map(tuple, polygon))) < 3:
+            rejected += 1
             continue
-        paths = [points for (color, _), points in zip(raw_brush, mapped_brush)
-                 if color == name and len(set(map(tuple, points))) >= 3]
-        for start in range(0, len(paths), 80):
-            steps.append({"name": f"Contour brush {name} {start // 80 + 1:03d}",
-                          "tool": "brush_paths", "color": name, "width": 4,
-                          "paths": paths[start:start + 80]})
-        print(f"Painter {name}: {len(paths)} curved brush paths")
-    for i, points in enumerate(mapped_original):
+        step = {"name": f"Solid region {name} {i:03d}",
+                "tool": "closed_path", "color": name, "fill": name,
+                "points": polygon, "fill_point": seed[0],
+                "width": 1, "smooth": False, "skip_color_probe": True}
+        if not DrawingEngine.point_in_polygon(step["fill_point"], polygon):
+            rejected += 1
+            continue
+        try:
+            DrawingEngine.verify_fill_boundary(step)
+        except ValueError:
+            rejected += 1
+            continue
+        steps.append(step)
+    for i, points in enumerate(outlines, 1):
         if len(set(map(tuple, points))) >= 2:
-            steps.append({"name": f"Final outline {i+1:03d}", "tool": "stroke",
-                          "color": "black", "smooth": False, "width": 1,
-                          "points": points})
+            steps.append({"name": f"Final outline {i:03d}", "tool": "stroke",
+                          "color": "black", "smooth": False,
+                          "width": 1, "points": points})
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({
-        "name": f"Contour painter from {source.name}", "steps": steps,
-        "painter": {"method": "connected color masks -> inward contour brush loops -> ink",
-                    "palette": names, "working_resolution": [rw, rh]}
+        "name": f"Solid region painter from {source.name}", "steps": steps,
+        "painter": {"method": "binary masks -> hole-free closed regions -> solid Paint fills -> ink",
+                    "fill_regions": len(steps) - len(outlines),
+                    "rejected_regions": rejected, "palette": names}
     }, indent=2), encoding="utf-8")
-    print(f"Created {output}: {len(steps)} drawing steps; no raster scanlines or bucket")
+    print(f"Created {output}: {len(candidates) - rejected} safe solid fills, "
+          f"{rejected} rejected, {len(outlines)} final contour paths")
 
 
 
