@@ -35,47 +35,53 @@ def draw_scene_strokes(path, speed, limit=None):
     dest_w, dest_h = max(1, round(width * scale)), max(1, round(height * scale))
     left = 310 + (240 - dest_w) // 2
     top = 155 + (180 - dest_h) // 2
-    plan = []
-    for record in paths[:limit]:
-        points = record.get('points', [])
-        if not points:
-            continue
-        if any(len(p) != 3 or not all(isinstance(v, (int, float)) for v in p)
-               or not 0 <= p[0] < width or not 0 <= p[1] < height
-               or not 1 <= p[2] <= max(width, height) for p in points):
-            raise ValueError('Invalid Scene Engine stroke coordinates or radius')
-        mapped = []
-        for x, y, radius in points:
+    # Scale-collapse and overlapping paths can replay the same Paint pixel
+    # thousands of times. Deduplicate at the *destination* resolution.
+    # Use one Paint dot per unique target pixel for a bounded, faithful
+    # ink-only smoke test; never retrace a previously painted position.
+    unique_pixels = set()
+    selected_paths = paths[:limit]
+    for record in selected_paths:
+        for point in record.get('points', []):
+            if (len(point) != 3 or
+                    not all(isinstance(v, (int, float)) for v in point) or
+                    not 0 <= point[0] < width or
+                    not 0 <= point[1] < height):
+                raise ValueError('Invalid Scene Engine stroke coordinates')
+            x, y, radius = point
             px, py = left + round(x * scale), top + round(y * scale)
-            size = 1  # Fixed pencil width: no ribbon switching during drawing
-            if not mapped or (px, py) != mapped[-1][:2]:
-                mapped.append((px, py, size))
-        if not mapped:
-            continue
-        # A Paint stroke has a single size; split at changes in radius.
-        segment = [mapped[0][:2]]
-        current_size = mapped[0][2]
-        for x, y, size in mapped[1:]:
-            if size != current_size:
-                if len(segment) == 1:
-                    segment.append(segment[0])
-                plan.append((current_size, segment))
-                segment = [segment[-1]]
-                current_size = size
-            if (x, y) != segment[-1]:
-                segment.append((x, y))
-        if len(segment) == 1:
-            segment.append(segment[0])
-        plan.append((current_size, segment))
+            # Radius-aware rasterization in Paint's reduced resolution.
+            r = max(0, round(radius * scale))
+            for dy in range(-r, r + 1):
+                for dx in range(-r, r + 1):
+                    if dx*dx + dy*dy <= r*r:
+                        unique_pixels.add((px + dx, py + dy))
+    # Rasterize horizontal contiguous spans: each destination pixel is
+    # visited exactly once. Unlike replaying overlapping source paths,
+    # this never repeatedly paints the same line.
+    rows = {}
+    for x, y in unique_pixels:
+        rows.setdefault(y, []).append(x)
+    plan = []
+    for y in sorted(rows):
+        xs = sorted(rows[y])
+        start = end = xs[0]
+        for x in xs[1:]:
+            if x == end + 1:
+                end = x
+            else:
+                plan.append((1, [[start, y], [end, y]]))
+                start = end = x
+        plan.append((1, [[start, y], [end, y]]))
     if not plan:
         raise ValueError('No drawable paths after mapping')
     engine = DrawingEngine(speed=speed)
     # Validate every planned position before touching the Paint canvas.
     for _, points in plan:
         engine.paint.validate_canvas_points(points)
-    print('Fixed Paint pencil width=1; no per-stroke size selection.')
-    print(f'Scene Engine Paint test: {len(plan)} stroke segments '
-          f'from {min(len(paths), limit or len(paths))} source paths; '
+    print('Deduplicated at Paint resolution: each target ink pixel is drawn once.')
+    print(f'Scene Engine Paint test: {len(plan)} nonoverlapping raster spans '
+          f'from {len(selected_paths)} source paths; '
           f'canvas={dest_w}x{dest_h}, scale={scale:.4f}')
     print('Use a NEW blank white maximized Paint canvas. F8 stops drawing.')
     engine.tools.select('pencil')
