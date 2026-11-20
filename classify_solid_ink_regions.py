@@ -42,6 +42,28 @@ class SolidRegionClassifier:
             perimeter = cv2.arcLength(max(contours, key=cv2.contourArea), True)
             compactness = 4*np.pi*area/(perimeter*perimeter) if perimeter else 0
             aspect = max(w,h)/max(1,min(w,h))
+            # Reconstruct the visible ink around this core, bounded by the
+            # original erosion radius. This is a diagnostic approximation:
+            # connected outlines may be included and must not be filled.
+            radius = max(1, int(round(self.core_radius)))
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                                (2*radius+1, 2*radius+1))
+            padded = cv2.copyMakeBorder(component, radius, radius, radius,
+                                        radius, cv2.BORDER_CONSTANT, value=0)
+            expanded = cv2.dilate(padded, kernel)
+            x0, y0 = max(0, x-radius), max(0, y-radius)
+            x1, y1 = min(ink.shape[1], x+w+radius), min(ink.shape[0], y+h+radius)
+            ox, oy = x0-(x-radius), y0-(y-radius)
+            footprint = ((expanded[oy:oy+y1-y0, ox:ox+x1-x0] > 0)
+                         & (ink[y0:y1, x0:x1] > 0)).astype(np.uint8)
+            footprint_area = int(np.count_nonzero(footprint))
+            footprint_contours, _ = cv2.findContours(
+                footprint, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            fp_perimeter = (cv2.arcLength(max(footprint_contours,
+                            key=cv2.contourArea), True)
+                            if footprint_contours else 0.0)
+            fp_compactness = (4*np.pi*footprint_area/fp_perimeter**2
+                              if fp_perimeter else 0.0)
             # Measure width variation along local distance-transform ridges.
             # A constant-width outline is less likely to be a filled region.
             local_distance = distance[y:y+h, x:x+w]
@@ -59,9 +81,12 @@ class SolidRegionClassifier:
                               and compactness >= self.min_compactness * 0.75)
             plausible = compact or variable_solid
             target = approved if plausible else rejected
-            target[y:y+h, x:x+w][component > 0] = 1
+            target[y0:y1, x0:x1][footprint > 0] = 1
             items.append({"bounds": [x,y,x+w-1,y+h-1],
                           "core_area": area,
+                          "footprint_area": footprint_area,
+                          "footprint_compactness": round(float(fp_compactness), 3),
+                          "footprint_to_core_ratio": round(footprint_area/max(area,1), 3),
                           "aspect_ratio": round(aspect,3),
                           "compactness": round(float(compactness),3),
                           "medial_width_variation": round(variation, 3),
@@ -77,6 +102,7 @@ class SolidRegionClassifier:
         display[ink>0] = (0,0,0)
         display[rejected>0] = (0,0,255)
         display[approved>0] = (0,160,0)
+        display[rejected>0] = (0,0,255)
         # Cores are intentionally shown, not complete source shapes:
         # region growth could cross into connected outline strokes.
         output, report = Path(output), Path(report)
@@ -86,10 +112,10 @@ class SolidRegionClassifier:
             raise RuntimeError(f"Cannot save {output}")
         summary = {"reference":str(reference),"core_radius":self.core_radius,
                    "review_candidates":sum(i["status"]=="REVIEW_COMPACT_CORE" for i in items),
-                   "rejected":sum(i["status"]=="REJECT_ELONGATED_CORE" for i in items),
+                   "rejected":sum(i["status"]=="REJECT_LINE_LIKE_CORE" for i in items),
                    "min_width_variation":self.min_width_variation,
                    "regions":items,
-                   "warning":"Only compact cores classified. Not full fill masks; no drawing edits."}
+                   "warning":"Reconstructed footprints are diagnostic approximations; connected outlines may overlap. No drawing edits."}
         report.write_text(json.dumps(summary,indent=2),encoding="utf-8")
         print(json.dumps(summary,indent=2))
         print(f"Saved {output}; no Paint or drawing changes.")
