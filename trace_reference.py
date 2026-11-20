@@ -54,7 +54,7 @@ class ColorRegionSegmenter:
     turning shading into extra contour lines. No endpoint guessing is used.
     """
 
-    def __init__(self, clusters=9, min_region_area=140, min_color_distance=26):
+    def __init__(self, clusters=7, min_region_area=650, min_color_distance=42):
         self.clusters = clusters
         self.min_region_area = min_region_area
         self.min_color_distance = min_color_distance
@@ -112,7 +112,7 @@ class ColorRegionSegmenter:
             strong = delta >= self.min_color_distance
             boundaries[ys[strong], xs[strong]] = 1
         # The black contour extractor already handles ink boundaries.
-        boundaries[cv2.dilate(ink_mask, np.ones((3, 3), np.uint8)) > 0] = 0
+        # Reject boundaries near existing ink, including its anti-aliased rim.\n        exclusion = cv2.dilate(ink_mask.astype(np.uint8),\n                               cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (13, 13)))\n        boundaries[exclusion > 0] = 0
         return boundaries, region_count
 
 
@@ -231,7 +231,7 @@ class ReferenceTracingPipeline:
         mask = self.ink.from_image(source)
         paths = self.tracer.trace(self.thinner.thin(mask))
         color_mask, region_count = self.color_regions.extract(source, mask)
-        color_paths = self.tracer.trace(self.thinner.thin(color_mask))
+        # Apply stricter filtering ONLY to added color boundaries.\n        # Preserve all original black details, including tiny eye features.\n        raw_color_paths = self.tracer.trace(self.thinner.thin(color_mask))\n        color_paths = [p for p in raw_color_paths\n                       if cv2.arcLength(np.asarray(p, dtype=np.int32), False) >= 24\n                       and len(p) >= 3]
         if not paths:
             raise ValueError("No ink paths found")
         # Map all paths together so the original and color edges align.
