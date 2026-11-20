@@ -8,7 +8,7 @@ from .components import PaintColors, PaintTools, PaintCanvas, PaintStrokeSize, R
 
 class DrawingEngine:
     SUPPORTED_SHAPES = frozenset(('ellipse', 'rounded_rectangle'))
-    SUPPORTED_TOOLS = SUPPORTED_SHAPES | {'stroke', 'closed_path', 'raster_runs'}
+    SUPPORTED_TOOLS = SUPPORTED_SHAPES | {'stroke', 'closed_path', 'raster_runs', 'brush_paths'}
 
     def __init__(self, controller=None, speed=1.0):
         self.paint = controller if controller is not None else PaintController(drawing_speed=speed)
@@ -32,6 +32,17 @@ class DrawingEngine:
                 raise ValueError(f'Step {index}: missing name')
             if step.get('tool') not in cls.SUPPORTED_TOOLS:
                 raise ValueError(f'Step {index}: unsupported tool {step.get("tool")!r}')
+            if step['tool'] == 'brush_paths':
+                if step.get('color') not in RGB or step.get('width') not in (1, 2, 3, 4):
+                    raise ValueError(f'Step {index}: invalid brush color or size')
+                paths = step.get('paths')
+                if not isinstance(paths, list) or not paths or any(
+                    not isinstance(path, list) or len(path) < 2 or
+                    any(not isinstance(p, list) or len(p) != 2 or
+                        any(type(v) is not int or v < 0 for v in p) for p in path)
+                    for path in paths):
+                    raise ValueError(f'Step {index}: brush_paths needs nonempty paths')
+                continue
             if step['tool'] == 'raster_runs':
                 if step.get('color') not in RGB:
                     raise ValueError(f'Step {index}: unsupported raster color')
@@ -197,6 +208,21 @@ class DrawingEngine:
         try:
             for index, step in enumerate(steps, 1):
                 name, tool = step['name'], step['tool']
+                if tool == 'brush_paths':
+                    print(f'\\n{index}/{len(steps)} {name}: {len(step["paths"])} brush paths')
+                    self.tools.select('pencil')
+                    self.colors.select_primary(step['color'])
+                    self.stroke_size.select(step['width'])
+                    actual = self.colors.primary.read_pixel()
+                    if not self.color_matches(actual, RGB[step['color']], tolerance=12):
+                        self.colors.current_primary = None
+                        self.colors.select_primary(step['color'])
+                        actual = self.colors.primary.read_pixel()
+                        if not self.color_matches(actual, RGB[step['color']], tolerance=12):
+                            raise RuntimeError(f'{name}: Color 1 mismatch: {actual}')
+                    for path in step['paths']:
+                        self.canvas.stroke(path)
+                    continue
                 if tool == 'raster_runs':
                     print(f'\\n{index}/{len(steps)} {name}: {len(step["runs"])} raster spans, color={step["color"]}')
                     self.tools.select('pencil')
