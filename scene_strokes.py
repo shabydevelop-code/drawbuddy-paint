@@ -190,6 +190,43 @@ def recover_missing_ink(ink, rebuilt, records, excess_budget=300):
     return rebuilt, records, recovered
 
 
+
+def recover_missing_segments(ink, rebuilt, records, limit=120):
+    """Try bounded isolated diagnostic points on uncovered ink islands.
+
+    Never connect unrelated points with invented lines. Accept a dot only
+    when it improves IoU; preserve the original result otherwise.
+    """
+    missing = np.uint8((ink != 0) & (rebuilt == 0))
+    count, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        missing, connectivity=8)
+    components = sorted(range(1, count),
+                        key=lambda i: (-int(stats[i, cv2.CC_STAT_AREA]), i))
+    added = 0
+    for i in components:
+        if added >= limit:
+            break
+        if int(stats[i, cv2.CC_STAT_AREA]) < 2:
+            continue
+        cx, cy = centroids[i]
+        x, y = int(round(cx)), int(round(cy))
+        if not (0 <= y < ink.shape[0] and 0 <= x < ink.shape[1]) or labels[y, x] != i:
+            ys, xs = np.nonzero(labels == i)
+            y, x = int(ys[len(ys)//2]), int(xs[len(xs)//2])
+        x0, x1 = max(0, x-1), min(ink.shape[1], x+2)
+        y0, y1 = max(0, y-1), min(ink.shape[0], y+2)
+        yy, xx = np.ogrid[y0:y1, x0:x1]
+        disk = (xx-x)**2 + (yy-y)**2 <= 1
+        fresh = disk & (rebuilt[y0:y1, x0:x1] == 0)
+        gain = int(np.count_nonzero(fresh & (ink[y0:y1, x0:x1] != 0)))
+        spill = int(np.count_nonzero(fresh & (ink[y0:y1, x0:x1] == 0)))
+        if gain <= spill or gain == 0:
+            continue
+        cv2.circle(rebuilt, (x, y), 1, 1, -1, cv2.LINE_8)
+        records.append({'points': [[x, y, 1]]})
+        added += 1
+    return rebuilt, records, added
+
 def fidelity(ink, rebuilt):
     union = (rebuilt != 0) | (ink != 0)
     intersection = (rebuilt != 0) & (ink != 0)
@@ -221,7 +258,17 @@ def export_strokes(ink, centerline, output):
     if width_mode == 'ink-contained-radius':
         rebuilt, records, recovered_pixels = recover_missing_ink(
             ink, rebuilt, records, excess_budget=max(300, before_recovery_excess))
+    before_segments_iou, _, _ = fidelity(ink, rebuilt)
+    original_rebuilt = rebuilt.copy()
+    original_count = len(records)
+    rebuilt, records, supplemental_strokes = recover_missing_segments(
+        ink, rebuilt, records)
     iou, missing, excess = fidelity(ink, rebuilt)
+    if iou < before_segments_iou:
+        rebuilt = original_rebuilt
+        del records[original_count:]
+        supplemental_strokes = 0
+        iou, missing, excess = fidelity(ink, rebuilt)
     assert iou >= before_recovery_iou - 1e-12
     preview = np.full((*ink.shape, 3), 255, np.uint8)
     preview[rebuilt != 0] = (20, 20, 20)
@@ -244,6 +291,8 @@ def export_strokes(ink, centerline, output):
               'pre_recovery_missing_ink_pixels': before_recovery_missing,
               'pre_recovery_excess_ink_pixels': before_recovery_excess,
               'recovered_ink_pixels': recovered_pixels,
+              'pre_supplemental_iou': round(before_segments_iou, 6),
+              'supplemental_strokes': supplemental_strokes,
               'strokes': len(records),
               'stroke_points': sum(len(p['points']) for p in records),
               'reconstruction_iou': round(iou, 6),
