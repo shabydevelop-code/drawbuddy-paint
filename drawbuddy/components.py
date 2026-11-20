@@ -29,6 +29,63 @@ class PaintColors:
         self.swatches = {name: PaintComponent(controller, name) for name in RGB}
         self.current_primary = None
 
+    def select_rgb(self, rgb):
+        """Select a custom Paint Color 1 via the Windows Edit Colors dialog.
+
+        Requires pywinauto; fail closed if dialog controls cannot be identified.
+        """
+        import time
+        from pywinauto import Desktop
+        from pywinauto.keyboard import send_keys
+        rgb = tuple(int(v) for v in rgb)
+        if len(rgb) != 3 or any(not 0 <= v <= 255 for v in rgb):
+            raise ValueError(f"Invalid RGB color: {rgb}")
+        if self.current_primary == rgb:
+            return
+        # Edit Colors is to the right of the built-in Paint palette.
+        # UIA lookup avoids guessing an uncalibrated ribbon coordinate.
+        self.controller.activate()
+        window = Desktop(backend="uia").window(handle=self.controller.hwnd)
+        buttons = window.descendants(control_type="Button")
+        edit = next((b for b in buttons
+                     if "edit colors" in (b.window_text() or "").lower()
+                     or "ערוך צבעים" in (b.window_text() or "")), None)
+        if edit is None:
+            raise RuntimeError("Paint Edit Colors button not found via UI Automation; color drawing stopped")
+        edit.click_input()
+        time.sleep(0.35)
+        dialog = Desktop(backend="uia").window(title_re=".*(Edit Colors|Edit colors|עריכת צבעים).*")
+        if not dialog.exists(timeout=3):
+            raise RuntimeError("Paint Edit Colors dialog not found; color drawing stopped")
+        # Common Windows Paint dialog exposes Red/Green/Blue edit boxes.
+        edits = dialog.descendants(control_type="Edit")
+        if len(edits) < 3:
+            raise RuntimeError("Paint RGB controls not found; color drawing stopped")
+        # Identify RGB fields by adjacent text labels rather than arbitrary indexes.
+        labels = dialog.descendants(control_type="Text")
+        targets = {}
+        for label in labels:
+            name = (label.window_text() or "").strip().lower().rstrip(":")
+            if name in ("red", "green", "blue", "אדום", "ירוק", "כחול"):
+                box = label.rectangle()
+                neighbors = [e for e in edits if abs(e.rectangle().top - box.top) < 18
+                             and e.rectangle().left > box.right]
+                if neighbors:
+                    key = {"red": "red", "אדום": "red", "green": "green",
+                           "ירוק": "green", "blue": "blue", "כחול": "blue"}[name]
+                    targets[key] = min(neighbors, key=lambda e: e.rectangle().left)
+        if len(targets) != 3:
+            raise RuntimeError("Cannot reliably map Paint RGB inputs; color drawing stopped")
+        for key, value in zip(("red", "green", "blue"), rgb):
+            targets[key].set_edit_text(str(value))
+        ok = next((b for b in dialog.descendants(control_type="Button")
+                   if (b.window_text() or "").strip().lower() in ("ok", "אישור")), None)
+        if ok is None:
+            raise RuntimeError("Paint RGB dialog OK button not found")
+        ok.click_input()
+        self.current_primary = rgb
+        print(f"  COLOR custom RGB={rgb}")
+
     def select_primary(self, name):
         """Select the calibrated palette swatch without treating the ribbon
         Color 1 label pixel as the actual ink color.
