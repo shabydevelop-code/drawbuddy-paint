@@ -246,61 +246,6 @@ class DrawingSequencePlanner:
 
 
 
-class BoundaryRepair:
-    """Snap short dangling endpoints to nearby ink paths, never arbitrary regions."""
-
-    def __init__(self, max_gap=3.0):
-        self.max_gap = max_gap
-
-    @staticmethod
-    def _projection(p, a, b):
-        vx, vy = b[0]-a[0], b[1]-a[1]
-        length2 = vx*vx + vy*vy
-        if not length2:
-            return tuple(a), 0.0
-        t = max(0.0, min(1.0, ((p[0]-a[0])*vx+(p[1]-a[1])*vy)/length2))
-        return (a[0]+t*vx, a[1]+t*vy), t
-
-    def repair(self, paths, mask):
-        """Append separate short bridges. Do not alter traced paths or close loops blindly."""
-        h, w = mask.shape
-        # Only endpoints of open paths may need bridging.
-        endpoints = [(i, side, tuple(path[0] if side == 0 else path[-1]))
-                     for i, path in enumerate(paths) if len(path) > 1
-                     and path[0] != path[-1] for side in (0, 1)]
-        bridges, used = [], set()
-        for i, side, p in endpoints:
-            if (i, side) in used:
-                continue
-            candidates = []
-            for j, other in enumerate(paths):
-                if i == j:
-                    continue
-                for a, b in zip(other, other[1:]):
-                    projected, _ = self._projection(p, a, b)
-                    q = (int(round(projected[0])), int(round(projected[1])))
-                    distance = math.dist(p, q)
-                    if 1.1 <= distance <= self.max_gap:
-                        candidates.append((distance, j, q))
-            if not candidates:
-                continue
-            distance, j, q = min(candidates)
-            # Require both endpoints to lie near actual source ink, not across
-            # an intentional whitespace gap. The source can be anti-aliased.
-            samples = np.linspace(p, q, max(3, int(math.ceil(distance * 3))))
-            if any(not (0 <= int(round(x)) < w and 0 <= int(round(y)) < h)
-                   for x, y in samples):
-                continue
-            near_ink = cv2.dilate(mask.astype(np.uint8),
-                                 np.ones((3, 3), np.uint8))
-            if not all(near_ink[int(round(y)), int(round(x))]
-                       for x, y in samples):
-                continue
-            bridges.append([list(p), list(q)])
-            used.add((i, side))
-        return bridges
-
-
 class PaintLeakAuditor:
     """Rasterize planned strokes and report flood-fill regions and dangling ends."""
 
@@ -341,11 +286,10 @@ class ConservativeWidthMapper:
 
 
 class ReferenceTracingPipeline:
-    def __init__(self, threshold=95, min_length=12, max_gap=3):
+    def __init__(self, threshold=95, min_length=12):
         self.ink = InkMask(threshold)
         self.thinner = ZhangSuenThinner()
         self.tracer = SkeletonPathTracer(min_length)
-        self.repair = BoundaryRepair(max_gap)
         self.widths = ConservativeWidthMapper()
         self.planner = DrawingSequencePlanner()
         self.mapper = PaintCanvasMapper()
@@ -356,8 +300,6 @@ class ReferenceTracingPipeline:
         paths = self.tracer.trace(self.thinner.thin(mask))
         if not paths:
             raise ValueError("No ink paths found")
-        bridges = self.repair.repair(paths, mask)
-        paths.extend(bridges)
         widths = self.widths.assign(paths, mask)
         plan = self.planner.plan(paths, widths)
         ordered = [p for _, _, p, _ in plan]
@@ -375,7 +317,7 @@ class ReferenceTracingPipeline:
             raise ValueError("No drawable strokes")
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps({
-            "name": "Dog traced v4 - conservative repair and thinner lines",
+            "name": "Dog traced from reference",
             "steps": steps
         }, indent=2), encoding="utf-8")
         # Audit in final Paint coordinates, with a safety margin.
@@ -385,13 +327,12 @@ class ReferenceTracingPipeline:
                                    [s["width"] for s in steps],
                                    (canvas_h, canvas_w))
         audit.update({"source": str(source), "drawing": str(output),
-                      "original_paths": len(paths) - len(bridges),
-                      "repair_bridges": len(bridges),
+                      "original_paths": len(paths),
                       "steps": len(steps),
-                      "note": "Repairs are conservative; manual verification is required."})
+                      "note": "No automatic gap repair; inspect Paint before bucket filling."})
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(json.dumps(audit, indent=2), encoding="utf-8")
-        print(f"Created {output}: {len(steps)} strokes, {len(bridges)} short bridges")
+        print(f"Created {output}: {len(steps)} strokes; automatic gap repair disabled")
         print(f"Audit: {report}; {audit['enclosed_regions']} enclosed regions")
         print("IMPORTANT: Not a guarantee against Paint bucket leaks.")
 
@@ -404,9 +345,8 @@ def main():
     parser.add_argument("--report", type=Path, default=Path("drawings/dog-audit.json"))
     parser.add_argument("--threshold", type=int, default=95)
     parser.add_argument("--min-length", type=int, default=12)
-    parser.add_argument("--max-gap", type=float, default=3.0)
     args = parser.parse_args()
-    ReferenceTracingPipeline(args.threshold, args.min_length, args.max_gap).run(
+    ReferenceTracingPipeline(args.threshold, args.min_length).run(
         args.image, args.output, args.report)
 
 
