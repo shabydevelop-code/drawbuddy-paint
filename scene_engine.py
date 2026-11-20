@@ -8,6 +8,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from scene_paths import export_paths
+from scene_layers import export_visual_layers
 from scene_simplify import simplify_scene
 
 
@@ -166,6 +167,7 @@ def main():
     vector_metrics, vector_difference = validate_vector_geometry(scene, runs)
     path_metrics = export_paths(scene, output)
     simplification_metrics = simplify_scene(scene, output)
+    layer_metrics = export_visual_layers(scene, output)
     cv2.imwrite(str(output / 'vector-difference.png'), vector_difference)
     # Avoid enormous JSON arrays: save the exact pixel labels separately.
     labels = np.asarray(scene['labels'], np.uint8)
@@ -180,6 +182,7 @@ def main():
               'vector_geometry': vector_metrics,
               'path_network': path_metrics,
               'simplification': simplification_metrics,
+              'visual_layers': layer_metrics,
               'shared_boundary_network': shared_boundary_report(scene),
               'vector_runs': len(runs),
               'paint_ready': False,
