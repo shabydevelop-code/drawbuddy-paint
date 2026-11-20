@@ -16,6 +16,16 @@ except Exception:
     except Exception:
         pass
 
+class DrawingCancelled(Exception):
+    """User requested immediate cancellation with the Escape key."""
+
+
+def check_cancel():
+    # Windows global key state works even while Paint has keyboard focus.
+    if u.GetAsyncKeyState(0x1B) & 0x8000:
+        raise DrawingCancelled('Drawing stopped by user (Esc)')
+
+
 CALLBACK = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 u.EnumWindows.argtypes = [CALLBACK, wintypes.LPARAM]
 u.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
@@ -159,6 +169,7 @@ class PaintController:
     def wait_until(deadline):
         """Use a monotonic clock rather than inaccurate sub-ms sleep calls."""
         while True:
+            check_cancel()
             remaining = deadline - time.perf_counter()
             if remaining <= 0:
                 return
@@ -166,7 +177,8 @@ class PaintController:
                 time.sleep(remaining - 0.001)
 
     def stroke(self, points, duration=0.008):
-        """Pace every mouse event by geometry and elapsed time, never skip points."""
+        """Pace every mouse event; Esc cancels and releases the mouse."""
+        check_cancel()
         if len(points) < 2:
             raise ValueError('Stroke requires at least two points')
         self.validate_canvas_points(points)
@@ -180,6 +192,7 @@ class PaintController:
             pg.mouseDown(button='left')
             try:
                 for i in range(1, len(points)):
+                    check_cancel()
                     x, y = points[i]
                     pg.moveTo(*self.point(x, y), duration=0)
                     following = points[i + 1] if i + 1 < len(points) else None
@@ -217,6 +230,7 @@ class PaintController:
         dwell = max(0.002, 0.025 / self.drawing_speed)
         try:
             for i, (x1, x2, y) in enumerate(runs):
+                check_cancel()
                 pg.moveTo(*self.point(x1, y), duration=0)
                 pg.mouseDown(button='left')
                 try:
