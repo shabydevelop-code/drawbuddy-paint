@@ -112,10 +112,10 @@ class PaintController:
             raise ValueError('Stroke requires at least two points')
         self.validate_canvas_points(points)
         self.activate()
-        step_duration = max(0.006, duration / self.drawing_speed)
+        step_duration = max(0.0, duration / self.drawing_speed)
         print(f'  ACTION stroke points={len(points)} speed={self.drawing_speed:g}x '
               f'seconds_per_segment={step_duration:.5f}')
-        pg.moveTo(*self.point(*points[0]), duration=0.25)
+        pg.moveTo(*self.point(*points[0]), duration=0)
         # PyAutoGUI's global PAUSE and MINIMUM_DURATION otherwise override
         # per-segment timing; change them only inside this stroke and restore.
         old_pause, old_min = pg.PAUSE, pg.MINIMUM_DURATION
@@ -133,7 +133,7 @@ class PaintController:
                 pg.mouseUp(button='left')
         finally:
             pg.PAUSE, pg.MINIMUM_DURATION = old_pause, old_min
-        time.sleep(0.4)
+        time.sleep(0.01)
 
     def press(self, key):
         self.activate()
