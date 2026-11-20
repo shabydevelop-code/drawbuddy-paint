@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 from drawbuddy.drawing_engine import DrawingEngine
+from drawbuddy.freehand_painter import build_freehand_drawing
 from drawbuddy.result_publisher import ResultPublisher
 from compare_images import compare_paint_canvas
 from drawbuddy.binary_painter import build_binary_drawing, build_region_drawing, build_outline_drawing, build_color_raster_drawing
@@ -14,6 +15,7 @@ def main():
     parser.add_argument('drawing', nargs='?', help='Drawing name (e.g. dog), without .json')
     parser.add_argument('--speed', type=float, default=None, help='Stroke speed multiplier (e.g. 4, 20, 50, 100)')
     parser.add_argument('--no-publish-result', action='store_true', help='Skip automatic Paint canvas capture and GitHub upload')
+    parser.add_argument('--freehand-source', type=Path, help='Draw source with contour-following freehand mouse strokes')
     parser.add_argument('--binary-source', type=Path, help='Print the source as 0/1 horizontal pixel runs (default)')
     parser.add_argument('--binary-fill', action='store_true', help='Experimental contour and bucket fill mode (unsafe until validated)')
     parser.add_argument('--binary-runs', action='store_true', help='Explicitly select the default 0/1 row-by-row printing')
@@ -24,7 +26,12 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
     drawings_dir = root / 'drawings'
-    if args.binary_source:
+    if args.freehand_source and (args.binary_source or args.drawing):
+        parser.error('Use --freehand-source alone, without a drawing or --binary-source')
+    if args.freehand_source:
+        drawing = build_freehand_drawing(args.freehand_source)
+        print(f'Freehand plan: {drawing["freehand"]}')
+    elif args.binary_source:
         if args.drawing:
             parser.error('Specify either a drawing name or --binary-source, not both')
         if args.binary_threshold is not None and not 0 <= args.binary_threshold <= 255:
