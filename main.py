@@ -456,8 +456,85 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     engine.paint.refresh_display()
 
 
+
+def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None):
+    """Validate a 16-color pixel plan; draw only with explicit opt-in.
+
+    Coordinates are local to the image, anchored to a safe Paint canvas area.
+    Exact RGB colors use the existing Paint Edit Colors UIA implementation.
+    """
+    data = json.loads(Path(path).read_text(encoding='utf-8'))
+    width, height = data.get('width'), data.get('height')
+    groups = data.get('groups')
+    if (data.get('format') != 'drawbuddy-paint-stroke-plan-v1'
+            or type(width) is not int or type(height) is not int
+            or width < 1 or height < 1 or width > 300 or height > 328
+            or not isinstance(groups, list) or len(groups) != 16):
+        raise ValueError('Expected a valid 16-color plan of at most 300x328')
+    if max_strokes is not None and max_strokes < 1:
+        raise ValueError('--paint-plan-limit must be positive')
+    left, top = 250 + (300 - width) // 2, 155 + (328 - height) // 2
+    work = []
+    seen_colors = set()
+    for group in groups:
+        color = group.get('rgb')
+        if (not isinstance(color, str) or len(color) != 7
+                or not color.startswith('#')):
+            raise ValueError('Invalid plan color')
+        try:
+            rgb = tuple(bytes.fromhex(color[1:]))
+        except ValueError as exc:
+            raise ValueError('Invalid RGB hex color') from exc
+        if len(rgb) != 3 or color.upper() in seen_colors:
+            raise ValueError('Duplicate or invalid plan color')
+        seen_colors.add(color.upper())
+        strokes = group.get('strokes')
+        if not isinstance(strokes, list) or type(group.get('background')) is not bool:
+            raise ValueError('Invalid plan group')
+        if group['background'] and strokes:
+            raise ValueError('Background group must have no strokes')
+        for stroke in strokes:
+            if (not isinstance(stroke, list) or len(stroke) != 4
+                    or any(type(v) is not int for v in stroke)):
+                raise ValueError('Invalid stroke')
+            x0, y0, x1, y1 = stroke
+            if not (0 <= x0 <= x1 < width and 0 <= y0 == y1 < height):
+                raise ValueError('Stroke outside pixel plan')
+            if not group['background']:
+                work.append((rgb, (left + x0, left + x1, top + y0)))
+    if max_strokes is not None:
+        work = work[:max_strokes]
+    print(f'16-color plan validated: {width}x{height}; '
+          f'{len(work):,} horizontal strokes selected; origin=({left},{top})')
+    if not execute:
+        print('VALIDATION ONLY: no Paint window opened or modified. '
+              'Use --paint-plan-execute to draw.')
+        return
+    engine = DrawingEngine(speed=speed)
+    for _, (x0, x1, y) in work:
+        engine.paint.validate_canvas_points([(x0, y), (x1, y)])
+    print('Paint execution uses exact custom RGB via Edit Colors; '
+          'not restricted to existing palette swatches.')
+    print('Use a NEW blank white maximized Paint canvas. F8 cancels.')
+    engine.tools.select('pencil')
+    engine.stroke_size.select(1)
+    current = None
+    for i, (rgb, run) in enumerate(work, 1):
+        if rgb != current:
+            engine.colors.select_rgb(rgb)
+            current = rgb
+        engine.paint.raster_runs([run])
+        if i % 500 == 0:
+            print(f'Pixel Paint progress: {i:,}/{len(work):,}')
+    engine.paint.refresh_display()
+    print('DONE: pixel plan drawn in Paint; no automatic publication.')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
+    parser.add_argument('--paint-plan', type=Path, help='Validate or draw a 16-color pixel stroke plan')
+    parser.add_argument('--paint-plan-execute', action='store_true', help='Actually draw the pixel plan in Paint (uses Edit Colors)')
+    parser.add_argument('--paint-plan-limit', type=int, default=None, help='Limit pixel strokes for a Paint smoke test')
     parser.add_argument('--scene-strokes', type=Path, help='Draw Scene Engine ink-strokes.json in Paint (experimental)')
     parser.add_argument('--scene-min-stroke-pixels', type=int, default=8, help='Minimum unique pixels per natural pen stroke (default 8; try 5 for detail)')
     parser.add_argument('--scene-validate-only', action='store_true', help='Validate planned pen paths without opening or touching Paint')
@@ -480,6 +557,22 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
+    if args.paint_plan:
+        if args.scene_strokes or args.drawing or any((
+                args.region_draw_source, args.region_source, args.centerline_source,
+                args.natural_source, args.continuous_source, args.lineart_source,
+                args.freehand_source, args.binary_source)):
+            parser.error('--paint-plan must be used alone')
+        config_path = Path(__file__).resolve().parent / 'config.json'
+        config = json.loads(config_path.read_text(encoding='utf-8')) if config_path.exists() else {}
+        speed = args.speed if args.speed is not None else config.get('drawing_speed', 1.0)
+        if type(speed) not in (float, int) or not math.isfinite(speed) or not 0 < speed <= 100:
+            parser.error('drawing speed must be greater than 0 and at most 100')
+        execute_pixel_paint_plan(args.paint_plan, float(speed),
+                                 args.paint_plan_execute, args.paint_plan_limit)
+        return
+    if args.paint_plan_execute or args.paint_plan_limit is not None:
+        parser.error('--paint-plan-execute and --paint-plan-limit require --paint-plan')
     if args.scene_strokes:
         if args.drawing or any((args.region_draw_source, args.region_source,
                 args.centerline_source, args.natural_source, args.continuous_source,
