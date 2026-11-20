@@ -122,7 +122,7 @@ class DrawingEngine:
                 name, tool = step['name'], step['tool']
                 if tool in ('stroke', 'closed_path'):
                     print(f'\n{index}/{len(steps)} {name}: {tool}, outline={step["color"]}')
-                    self.tools.pencil.click()
+                    self.tools.select('pencil')
                     self.colors.select_primary(step['color'])
                     points = list(step['points'])
                     if tool == 'closed_path' and points[-1] != points[0]:
@@ -134,7 +134,7 @@ class DrawingEngine:
                     self.canvas.stroke(points)
                     print(f'  DONE outline: {len(points)} mouse positions, Paint size={width}')
                     if tool == 'closed_path':
-                        self.tools.bucket.click()
+                        self.tools.select('bucket')
                         self.colors.select_primary(step['fill'])
                         x, y = step['fill_point']
                         # Confirm the seed is not already the intended color:
@@ -165,7 +165,7 @@ class DrawingEngine:
                 print(f'\n{index}/{len(steps)} {name}: {tool}, outline={outline}, fill={fill}')
                 # Preserve the last working sequence: tool -> outline -> draw ->
                 # Enter -> bucket -> fill color -> fill -> verify canvas pixel.
-                getattr(self.tools, tool).click()
+                self.tools.select(tool)
                 print(f'  OUTLINE requested={outline}')
                 self.colors.select_primary(outline)
                 self.canvas.draw_shape(bounds)
