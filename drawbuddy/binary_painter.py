@@ -152,8 +152,7 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
     steps = [{"name": "outer silhouette only", "tool": "stroke",
               "color": "black", "width": 1, "points": points}]
 
-    # Experimental single-detail test: the 10th largest direct inner
-    # contour, matching INNER 10 in preview_inner_contours.py.
+    # Incremental detail test: INNER 10 and INNER 12 from preview_inner_contours.py.
     # Do not alter the approved exterior silhouette.
     all_contours, hierarchy = cv2.findContours(ink, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     if hierarchy is not None:
@@ -163,15 +162,21 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
         candidates = [i for i, h in enumerate(tree)
                       if int(h[3]) == outer_index and cv2.contourArea(all_contours[i]) >= 20]
         candidates.sort(key=lambda i: cv2.contourArea(all_contours[i]), reverse=True)
-        if len(candidates) >= 10:
-            detail = cv2.approxPolyDP(all_contours[candidates[9]], epsilon=0.55, closed=True)
+        # Add just one more independently identified eye detail (INNER 12).
+        # Keep INNER 10 and the approved exterior unchanged.
+        for preview_number in (10, 12):
+            if len(candidates) < preview_number:
+                continue
+            detail = cv2.approxPolyDP(all_contours[candidates[preview_number - 1]],
+                                      epsilon=0.55, closed=True)
             detail_points = [[left + int(p[0][0]), top + int(p[0][1])] for p in detail]
             if len(detail_points) >= 3:
                 detail_points.append(detail_points[0])
-                steps.append({"name": "INNER 10 eye detail", "tool": "stroke",
-                              "color": "black", "width": 1, "points": detail_points})
-    return {"name": f"{source.stem}-outer-and-inner-10",
-            "mode": "binary-outer-and-inner-10",
+                steps.append({"name": f"INNER {preview_number} eye detail",
+                              "tool": "stroke", "color": "black", "width": 1,
+                              "points": detail_points})
+    return {"name": f"{source.stem}-outer-and-inner-10-12",
+            "mode": "binary-outer-and-inner-10-12",
             "binary": {"zero": "white", "one": "black", "width": size[0],
                        "height": size[1], "outlines": len(steps), "fill_enabled": False},
             "steps": steps}
