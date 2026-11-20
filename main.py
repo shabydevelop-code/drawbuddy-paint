@@ -247,30 +247,46 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
           f'from {len(selected_paths)} source paths; '
           f'canvas={dest_w}x{dest_h}, scale={scale:.4f}')
     print('Contour intersections are retained; nearly redundant paths are omitted.')
-    print('Use a NEW blank white maximized Paint canvas. F8 stops drawing.')
+    print('Use a NEW blank white maximized Paint canvas. F8 pauses/resumes.')
     engine.tools.select('pencil')
     engine.colors.select_primary('black')
-    # Paint sometimes does not fully activate Pencil on its first ribbon
-    # selection. Set the initial size, then physically click Pencil again
-    # before any mouseDown on the canvas. Do this only once per drawing.
+    # Pencil-size changes were not producing observable thickness changes.
+    # Keep one calibrated width until a separate Paint size test proves
+    # the ribbon controls actually affect the pencil.
     import time
-    engine.stroke_size.select(plan[0][0])
+    import ctypes
+    engine.stroke_size.select(1)
     engine.tools.pencil.click()
     engine.tools.current = 'pencil'
     time.sleep(0.6)
-    print('Paint Pencil reselected after color/size initialization.')
-    # The validated plan is ordered by visual phases; do not regroup by size.
-    try:
-        for index, (size, points) in enumerate(plan, 1):
-            from drawbuddy.controller import check_cancel
-            check_cancel()
-            engine.stroke_size.select(size)
-            engine.canvas.stroke(points)
-            if index % 100 == 0:
-                print(f'Scene progress: {index}/{len(plan)}')
-    except DrawingCancelled:
-        print('STOPPED by F8. Partial scene remains in Paint.')
-        return
+    print('Scene Paint uses constant Pencil size 1 (no ribbon size switching).')
+
+    def wait_for_resume():
+        # controller.stroke releases mouseUp in its finally clause before
+        # raising DrawingCancelled. Wait for key release, then a fresh press.
+        user32 = ctypes.windll.user32
+        print('PAUSED by F8; release F8, then press F8 again to resume.')
+        while user32.GetAsyncKeyState(0x77) & 0x8000:
+            time.sleep(0.05)
+        while not (user32.GetAsyncKeyState(0x77) & 0x8000):
+            time.sleep(0.05)
+        while user32.GetAsyncKeyState(0x77) & 0x8000:
+            time.sleep(0.05)
+        print('RESUMED.')
+
+    for index, (size, points) in enumerate(plan, 1):
+        while True:
+            try:
+                from drawbuddy.controller import check_cancel
+                check_cancel()
+                engine.canvas.stroke(points)
+                break
+            except DrawingCancelled:
+                wait_for_resume()
+                # Retry the interrupted gesture from its start. Existing
+                # ink remains on the canvas, so no pixels are erased.
+        if index % 100 == 0:
+            print(f'Scene progress: {index}/{len(plan)}')
     print('DONE: Scene Engine ink drawn in Microsoft Paint.')
     engine.paint.refresh_display()
 
