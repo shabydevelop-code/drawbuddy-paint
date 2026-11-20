@@ -1,5 +1,6 @@
 """Window activation, coordinate conversion, and mouse/keyboard interactions."""
 import ctypes
+import math
 import time
 from ctypes import wintypes
 import pyautogui as pg
@@ -106,29 +107,56 @@ class PaintController:
                     'drawing aborted before pressing the mouse button.'
                 )
 
+    @staticmethod
+    def stroke_delay(previous, current, following, speed, base_duration):
+        """Pace corners and short details, while accelerating long straight runs.
+
+        A small timing floor around corners gives Paint time to sample mouse
+        motion. Straight segments retain the requested speed multiplier.
+        """
+        if following is None:
+            return max(base_duration / speed, 0.001)
+        ax, ay = current[0] - previous[0], current[1] - previous[1]
+        bx, by = following[0] - current[0], following[1] - current[1]
+        alen = math.hypot(ax, ay)
+        blen = math.hypot(bx, by)
+        if alen < 0.01 or blen < 0.01:
+            return max(base_duration / speed, 0.0008)
+        cosine = max(-1.0, min(1.0, (ax * bx + ay * by) / (alen * blen)))
+        turn = 1.0 - cosine
+        if turn > 0.35:
+            floor = 0.002
+        elif turn > 0.08:
+            floor = 0.0012
+        elif alen <= 2.0 and blen <= 2.0:
+            floor = 0.0007
+        else:
+            floor = 0.0
+        return max(base_duration / speed, floor)
+
     def stroke(self, points, duration=0.008):
-        """Continuous Paint Pencil stroke. Speed changes stroke timing only, not UI waits."""
+        """Adaptive Pencil pacing: faster straights, more time for tight turns."""
         if len(points) < 2:
             raise ValueError('Stroke requires at least two points')
         self.validate_canvas_points(points)
         self.activate()
-        step_duration = max(0.0, duration / self.drawing_speed)
         print(f'  ACTION stroke points={len(points)} speed={self.drawing_speed:g}x '
-              f'seconds_per_segment={step_duration:.5f}')
+              'adaptive_corner_pacing=on')
         pg.moveTo(*self.point(*points[0]), duration=0)
-        # PyAutoGUI's global PAUSE and MINIMUM_DURATION otherwise override
-        # per-segment timing; change them only inside this stroke and restore.
         old_pause, old_min = pg.PAUSE, pg.MINIMUM_DURATION
         pg.PAUSE, pg.MINIMUM_DURATION = 0, 0
         try:
             pg.mouseDown(button='left')
             try:
-                for x, y in points[1:]:
-                    # PyAutoGUI may divide by zero for tiny positive durations.
-                    # Move immediately while holding the button; pace separately.
+                for i in range(1, len(points)):
+                    x, y = points[i]
                     pg.moveTo(*self.point(x, y), duration=0)
-                    if step_duration > 0:
-                        time.sleep(step_duration)
+                    following = points[i + 1] if i + 1 < len(points) else None
+                    delay = self.stroke_delay(
+                        points[i - 1], points[i], following,
+                        self.drawing_speed, duration)
+                    if delay:
+                        time.sleep(delay)
             finally:
                 pg.mouseUp(button='left')
         finally:
