@@ -38,14 +38,11 @@ def draw_scene_strokes(path, speed, limit=None):
     # Keep the original pen trajectories. Remove duplicate *edges* after
     # mapping to Paint resolution; never replace paths with scanline printing.
     selected_paths = paths[:limit]
-    used_edges = set()
-    used_dots = set()
+    visited_pixels = set()
     plan = []
-    duplicate_edges = 0
+    duplicate_pixels = 0
 
     def pixels_between(a, b):
-        # Integer Bresenham: the same raster edge is recognized regardless
-        # of which original path or direction produced it.
         x0, y0 = a
         x1, y1 = b
         dx, dy = abs(x1-x0), abs(y1-y0)
@@ -64,17 +61,14 @@ def draw_scene_strokes(path, speed, limit=None):
                 y0 += sy
 
     def flush(chain):
-        if len(chain) > 1:
-            plan.append((1, [list(p) for p in chain]))
-        elif len(chain) == 1 and chain[0] not in used_dots:
-            # A zero-length drag deposits a dot without connecting islands.
-            plan.append((1, [list(chain[0]), list(chain[0])]))
-            used_dots.add(chain[0])
+        if chain:
+            # A single pixel is drawn with a zero-length mouse drag.
+            coords = chain if len(chain) > 1 else [chain[0], chain[0]]
+            plan.append((1, [list(p) for p in coords]))
 
     for record in selected_paths:
-        source_points = record.get('points', [])
         mapped = []
-        for point in source_points:
+        for point in record.get('points', []):
             if (not isinstance(point, list) or len(point) != 3 or
                     not all(isinstance(v, (int, float)) for v in point) or
                     not 0 <= point[0] < width or
@@ -86,40 +80,30 @@ def draw_scene_strokes(path, speed, limit=None):
                 mapped.append(dest)
         if not mapped:
             continue
-        if len(mapped) == 1:
-            if mapped[0] not in used_dots:
-                flush([mapped[0]])
-            continue
         chain = []
-        for start, end in zip(mapped, mapped[1:]):
-            raster = list(pixels_between(start, end))
-            for p, q in zip(raster, raster[1:]):
-                edge = (p, q) if p < q else (q, p)
-                if edge in used_edges:
-                    duplicate_edges += 1
-                    if chain:
-                        flush(chain)
-                        chain = []
-                    continue
-                used_edges.add(edge)
-                used_dots.add(p)
-                used_dots.add(q)
-                if not chain:
-                    chain = [p, q]
-                elif chain[-1] == p:
-                    chain.append(q)
-                else:
+        previous = None
+        for target in mapped:
+            # The initial pixel of a subsequent segment belongs to the
+            # current chain; skip it to avoid falsely splitting the stroke.
+            raster = ([target] if previous is None
+                      else list(pixels_between(previous, target))[1:])
+            previous = target
+            for pixel in raster:
+                if pixel in visited_pixels:
+                    duplicate_pixels += 1
                     flush(chain)
-                    chain = [p, q]
-        if chain:
-            flush(chain)
+                    chain = []
+                    continue
+                visited_pixels.add(pixel)
+                chain.append(pixel)
+        flush(chain)
     if not plan:
         raise ValueError('No drawable paths after mapping')
     engine = DrawingEngine(speed=speed)
     # Validate every planned position before touching the Paint canvas.
     for _, points in plan:
         engine.paint.validate_canvas_points(points)
-    print(f'Natural Paint paths: removed {duplicate_edges} repeated raster edges.')
+    print(f'Natural Paint paths: removed {duplicate_pixels} revisited Paint pixels.')
     print(f'Scene Engine Paint test: {len(plan)} deduplicated pen paths '
           f'from {len(selected_paths)} source paths; '
           f'canvas={dest_w}x{dest_h}, scale={scale:.4f}')
