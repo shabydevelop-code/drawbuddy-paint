@@ -72,6 +72,83 @@
       "strokes_are_diagnostic_only": true,
       "paint_ready": false
     },
+    "paint_scale_stroke_fidelity": {
+      "resolution": [
+        247,
+        270
+      ],
+      "source_ink_pixels": 6072,
+      "reconstructed_ink_pixels": 5988,
+      "missing_ink_pixels": 96,
+      "extra_ink_pixels": 12,
+      "iou": 0.982249,
+      "largest_missing_regions": [
+        {
+          "x": 147,
+          "y": 68,
+          "width": 2,
+          "height": 4,
+          "pixels": 6
+        },
+        {
+          "x": 170,
+          "y": 86,
+          "width": 4,
+          "height": 1,
+          "pixels": 4
+        },
+        {
+          "x": 105,
+          "y": 119,
+          "width": 3,
+          "height": 3,
+          "pixels": 3
+        },
+        {
+          "x": 181,
+          "y": 225,
+          "width": 3,
+          "height": 1,
+          "pixels": 3
+        },
+        {
+          "x": 173,
+          "y": 50,
+          "width": 1,
+          "height": 2,
+          "pixels": 2
+        },
+        {
+          "x": 172,
+          "y": 68,
+          "width": 1,
+          "height": 2,
+          "pixels": 2
+        },
+        {
+          "x": 163,
+          "y": 89,
+          "width": 2,
+          "height": 1,
+          "pixels": 2
+        },
+        {
+          "x": 17,
+          "y": 213,
+          "width": 1,
+          "height": 2,
+          "pixels": 2
+        },
+        {
+          "x": 148,
+          "y": 239,
+          "width": 1,
+          "height": 2,
+          "pixels": 2
+        }
+      ],
+      "note": "Offline reconstructed strokes at Paint scale, not a Paint screenshot"
+    },
     "paint_ready": false
   },
   "shared_boundary_network": {
