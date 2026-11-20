@@ -49,7 +49,7 @@ class FillRegionValidator:
         canvas[dy:dy+target_h, dx:dx+target_w] = resized
         return canvas
 
-    def validate(self, reference_path, drawing):
+    def validate(self, reference_path, drawing, diagnostic_path=None):
         reference = cv2.imread(str(reference_path), cv2.IMREAD_COLOR)
         if reference is None:
             raise FileNotFoundError(reference_path)
@@ -76,6 +76,8 @@ class FillRegionValidator:
             (ink == 0).astype(np.uint8), connectivity=4)
         candidates = []
         exterior = []
+        review_masks = []
+        review_centers = []
         for i in range(1, count):
             x, y, rw, rh, area = map(int, stats[i])
             if area < self.min_area:
@@ -97,11 +99,46 @@ class FillRegionValidator:
             item = (area, round(centers[i][0]+offset[0]),
                     round(centers[i][1]+offset[1]), len(major), len(separated))
             (exterior if touches_border else candidates).append(item)
+            if separated and not touches_border:
+                review_masks.append(component)
+                review_centers.append((item[1], item[2]))
         candidates.sort(reverse=True)
+        if diagnostic_path is not None:
+            self.save_diagnostic(diagnostic_path, ink, labels, palette,
+                                 review_masks, review_centers, offset)
         return candidates, exterior
 
-    def report(self, reference_path, drawing):
-        candidates, exterior = self.validate(reference_path, drawing)
+    @staticmethod
+    def save_diagnostic(path, ink, labels, palette, masks, centers, offset):
+        """Show suspicious regions and approximate source color transitions."""
+        h, w = ink.shape
+        canvas = np.full((h, w, 3), 255, dtype=np.uint8)
+        canvas[ink > 0] = (0, 0, 0)
+        transitions = np.zeros((h, w), dtype=bool)
+        transitions[:, 1:] |= (labels[:, 1:] != labels[:, :-1])
+        transitions[1:, :] |= (labels[1:, :] != labels[:-1, :])
+        for mask in masks:
+            canvas[mask] = (175, 235, 255)
+            candidate_edges = transitions & mask & (ink == 0)
+            canvas[candidate_edges] = (255, 0, 255)
+        canvas[ink > 0] = (0, 0, 0)
+        for x, y in centers:
+            cv2.drawMarker(canvas, (int(x-offset[0]), int(y-offset[1])),
+                           (0, 0, 255), cv2.MARKER_CROSS, 13, 2)
+        legend = np.full((55, w, 3), 255, dtype=np.uint8)
+        cv2.putText(legend, "YELLOW: review  MAGENTA: source edges",
+                    (4, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.37, (0, 0, 0), 1)
+        cv2.putText(legend, "RED CROSS: region center (approximate)",
+                    (4, 39), cv2.FONT_HERSHEY_SIMPLEX, 0.37, (0, 0, 0), 1)
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not cv2.imwrite(str(path), np.vstack((legend, canvas))):
+            raise RuntimeError(f"Cannot save diagnostic: {path}")
+        print(f"Saved diagnostic: {path}")
+
+
+    def report(self, reference_path, drawing, diagnostic_path=None):
+        candidates, exterior = self.validate(reference_path, drawing, diagnostic_path)
         print(f"Enclosed regions checked: {len(candidates)}")
         for area, x, y, colors, differences in candidates:
             state = "REVIEW mixed source colors" if differences else "candidate"
@@ -119,9 +156,10 @@ def main():
                         nargs="?", default=Path("assets/dog-reference.png"))
     parser.add_argument("drawing", type=Path,
                         nargs="?", default=Path("drawings/dog.json"))
+    parser.add_argument('--output', type=Path, default=Path('output/fill-diagnostic.png'))
     args = parser.parse_args()
     drawing = json.loads(args.drawing.read_text(encoding="utf-8"))
-    FillRegionValidator().report(args.reference, drawing)
+    FillRegionValidator().report(args.reference, drawing, args.output)
 
 
 if __name__ == "__main__":
