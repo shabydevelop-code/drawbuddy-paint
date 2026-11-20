@@ -54,44 +54,52 @@ class PaintColors:
             raise RuntimeError("Paint Edit Colors button not found via UI Automation; color drawing stopped")
         edit.click_input()
         time.sleep(0.35)
-        # The Edit Colors dialog title differs across Paint versions and
-        # locales. Prefer a visible top-level window owned by Paint, then
-        # fall back to the localized title. Never pick an unrelated dialog.
-        import ctypes
-        from ctypes import wintypes
-        user32 = ctypes.windll.user32
-        GW_OWNER = 4
+        # Locate by RGB controls, not owner/title: modern Paint may host
+        # this dialog in a separate top-level window or a UIA child.
         dialog = None
-        deadline = time.monotonic() + 6.0
-        observed = []
+        deadline = time.monotonic() + 8.0
+        diagnostics = []
+        rgb_labels = {"red", "green", "blue", "אדום", "ירוק", "כחול"}
         while time.monotonic() < deadline and dialog is None:
             desktop = Desktop(backend="uia")
-            observed = []
-            for candidate in desktop.windows():
+            candidates = []
+            try:
+                candidates.extend(desktop.windows())
+            except Exception:
+                pass
+            try:
+                paint_root = desktop.window(handle=self.controller.hwnd)
+                candidates.extend(paint_root.descendants(control_type="Window"))
+            except Exception:
+                pass
+            diagnostics = []
+            for candidate in candidates:
                 try:
-                    handle = candidate.handle
+                    if candidate.handle == self.controller.hwnd:
+                        continue
                     title = candidate.window_text() or ""
-                    owner = user32.GetWindow(handle, GW_OWNER)
-                    # Dialog can be a child-owned popup or a top-level
-                    # owned window, with a translated or empty title.
-                    owned = owner == self.controller.hwnd
-                    if not owned and owner:
-                        owned = user32.GetAncestor(owner, 2) == self.controller.hwnd
-                    observed.append((handle, title, owned))
-                    if owned and candidate.is_visible() and handle != self.controller.hwnd:
+                    edits = candidate.descendants(control_type="Edit")
+                    texts = candidate.descendants(control_type="Text")
+                    labels_found = {
+                        (item.window_text() or "").strip().lower().rstrip(":")
+                        for item in texts
+                    } & rgb_labels
+                    diagnostics.append(
+                        f"{title!r} edits={len(edits)} rgb_labels={sorted(labels_found)}")
+                    if len(edits) >= 3 and (
+                            {"red", "green", "blue"} <= labels_found or
+                            {"אדום", "ירוק", "כחול"} <= labels_found):
                         dialog = candidate
                         break
                 except Exception:
                     continue
             if dialog is None:
-                time.sleep(0.2)
+                time.sleep(0.25)
         if dialog is None:
-            titles = [repr(title) for _, title, owned in observed if owned]
             raise RuntimeError(
-                "Paint Edit Colors dialog opened but could not be identified "
-                "as a visible Paint-owned window; owned windows: "
-                + (", ".join(titles) if titles else "(none)")
-                + ". Color drawing stopped.")
+                "Paint RGB dialog not identified by its controls; "
+                "no color was changed. UIA candidates: "
+                + "; ".join(diagnostics[:20]))
         # Common Windows Paint dialog exposes Red/Green/Blue edit boxes.
         edits = dialog.descendants(control_type="Edit")
         if len(edits) < 3:
