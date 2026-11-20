@@ -8,6 +8,15 @@ import numpy as np
 from .binary_painter import build_color_raster_drawing
 
 
+def _append_path(paths, current, left, top):
+    """PaintController requires two positions even for a one-pixel mark."""
+    if not current:
+        return
+    if len(current) == 1:
+        current = [current[0], current[0]]
+    paths.append([[left + int(x), top + int(y)] for x, y in current])
+
+
 def _vertical_region_paths(mask, left, top):
     """Fill a region using long alternating vertical strokes, with clean lifts."""
     count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
@@ -38,16 +47,13 @@ def _vertical_region_paths(mask, left, top):
                         mask[a[1], a[0]] and mask[last[1], last[0]]):
                     current.append(a)
                 else:
-                    paths.append([[left + x, top + y] for x, y in current])
+                    _append_path(paths, current, left, top)
                     current = None
             if current is None:
                 current = [a]
             if a != b:
                 current.append(b)
-        if current is not None:
-            if len(current) == 1:
-                current.append(current[0])
-            paths.append([[left + x, top + y] for x, y in current])
+        _append_path(paths, current, left, top)
     return paths
 
 
@@ -96,6 +102,9 @@ def build_natural_drawing(source):
                           'width': 1, 'paths': paths})
     if not steps:
         raise ValueError('No natural drawing strokes')
+    for step in steps:
+        if any(len(path) < 2 for path in step['paths']):
+            raise RuntimeError('Natural planner emitted an invalid single-point stroke')
     return {'name': raster['name'] + '-natural-precision', 'mode': 'natural',
             'natural': {'width': width, 'height': height,
                         'outline_paths': len(outlines),
