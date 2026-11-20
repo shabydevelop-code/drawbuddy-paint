@@ -285,11 +285,7 @@ class DrawingEngine:
                     else:
                         self.colors.select_primary(step['color'])
                     self.stroke_size.select(1)
-                    for x1, x2, y in step['runs']:
-                        if x1 == x2:
-                            self.paint.click(x1, y)
-                        else:
-                            self.canvas.stroke([[x1, y], [x2, y]])
+                    self.paint.raster_runs(step['runs'])
                     continue
                 if tool in ('stroke', 'closed_path'):
                     if tool == 'closed_path':
