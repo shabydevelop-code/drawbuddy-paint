@@ -18,7 +18,7 @@ from drawbuddy.binary_painter import build_binary_drawing, build_region_drawing,
 
 
 
-def draw_scene_strokes(path, speed, limit=None):
+def draw_scene_strokes(path, speed, limit=None, validate_only=False):
     """Draw the Scene Engine's actual variable-width ink paths in Paint.
 
     Scene coordinates are mapped into the calibrated 240x180 Paint canvas
@@ -99,6 +99,34 @@ def draw_scene_strokes(path, speed, limit=None):
         flush(chain)
     if not plan:
         raise ValueError('No drawable paths after mapping')
+    # Validate the exact planned pen motion before accessing Paint.
+    # Each point of each segment is rasterized, including endpoints and
+    # zero-length dot strokes. Overlap is a hard failure.
+    planned_pixels = set()
+    overlap_count = 0
+    out_of_bounds = 0
+    for _, points in plan:
+        for start, end in zip(points, points[1:]):
+            for pixel in pixels_between(tuple(start), tuple(end)):
+                if not (left <= pixel[0] < left + dest_w + 2 and
+                        top <= pixel[1] < top + dest_h + 2):
+                    out_of_bounds += 1
+                if pixel in planned_pixels:
+                    overlap_count += 1
+                planned_pixels.add(pixel)
+    report = {'source_paths': len(selected_paths),
+              'planned_strokes': len(plan),
+              'unique_pixels': len(planned_pixels),
+              'repeated_pixel_visits': overlap_count,
+              'skipped_source_pixel_visits': duplicate_pixels,
+              'out_of_bounds_pixels': out_of_bounds,
+              'paint_execution_started': False}
+    print('Scene path validation:', json.dumps(report, indent=2))
+    if overlap_count or out_of_bounds:
+        raise RuntimeError('Scene path validation FAILED; Paint drawing blocked')
+    if validate_only:
+        print('PASS: planned Paint paths have zero repeated pixel visits.')
+        return
     engine = DrawingEngine(speed=speed)
     # Validate every planned position before touching the Paint canvas.
     for _, points in plan:
@@ -128,6 +156,7 @@ def draw_scene_strokes(path, speed, limit=None):
 def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
     parser.add_argument('--scene-strokes', type=Path, help='Draw Scene Engine ink-strokes.json in Paint (experimental)')
+    parser.add_argument('--scene-validate-only', action='store_true', help='Validate planned pen paths without opening or touching Paint')
     parser.add_argument('--scene-limit', type=int, default=None, help='Limit Scene Engine source paths for a short Paint test')
     parser.add_argument('drawing', nargs='?', help='Drawing name (e.g. dog), without .json')
     parser.add_argument('--speed', type=float, default=None, help='Stroke speed multiplier (e.g. 4, 20, 50, 100)')
@@ -157,8 +186,10 @@ def main():
         speed = args.speed if args.speed is not None else config.get('drawing_speed', 1.0)
         if type(speed) not in (float, int) or not math.isfinite(speed) or not 0 < speed <= 100:
             parser.error('drawing speed must be greater than 0 and at most 100')
-        draw_scene_strokes(args.scene_strokes, float(speed), args.scene_limit)
+        draw_scene_strokes(args.scene_strokes, float(speed), args.scene_limit, args.scene_validate_only)
         return
+    if args.scene_validate_only:
+        parser.error('--scene-validate-only requires --scene-strokes')
     if args.scene_limit is not None:
         parser.error('--scene-limit requires --scene-strokes')
     if args.region_draw_source and (args.region_source or args.centerline_source or args.natural_source or args.continuous_source or args.lineart_source or args.freehand_source or args.binary_source or args.drawing):
