@@ -63,15 +63,15 @@ def build_natural_drawing(source):
             mask[y - top, x1 - left:x2 - left + 1] = 1
         masks[step['color']] = mask
     black = masks.get('black', np.zeros((height, width), dtype=np.uint8))
-    contours, _ = cv2.findContours(black, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    contours, _ = cv2.findContours(black, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     contours = sorted(contours, key=lambda c: -cv2.arcLength(c, True))
     steps = []
     traced = np.zeros_like(black)
     outlines = []
     for contour in contours:
-        if len(contour) < 4 or cv2.arcLength(contour, True) < 9:
+        if len(contour) < 3:
             continue
-        approx = cv2.approxPolyDP(contour, 0.45, True)
+        approx = contour  # Keep source contour pixels; no polygon simplification.
         points = [[left + int(p[0][0]), top + int(p[0][1])] for p in approx]
         if len(points) < 3:
             continue
@@ -81,9 +81,9 @@ def build_natural_drawing(source):
     if outlines:
         steps.append({'name': 'Natural dark outlines', 'tool': 'brush_paths',
                       'color': 'black', 'width': 1, 'paths': outlines})
-    # Only omit contour pixels already traced; everything else gets a vertical
-    # fill stroke. Keep palette mapping exactly as in the raster reference.
-    for color in ('black', 'brown', 'orange'):
+    # Keep all source colors. Finish with black interior details for crisp
+    # facial features, without redrawing the traced contour pixels.
+    for color in ('brown', 'orange', 'black'):
         if color not in masks:
             continue
         fill = masks[color].copy()
@@ -96,7 +96,7 @@ def build_natural_drawing(source):
                           'width': 1, 'paths': paths})
     if not steps:
         raise ValueError('No natural drawing strokes')
-    return {'name': raster['name'] + '-natural', 'mode': 'natural',
+    return {'name': raster['name'] + '-natural-precision', 'mode': 'natural',
             'natural': {'width': width, 'height': height,
                         'outline_paths': len(outlines),
                         'fill_paths': sum(len(s['paths']) for s in steps[1:])},
