@@ -33,7 +33,7 @@ class PaintCanvasMapper:
 
 
 class InkMask:
-    """Separate near-black linework from colored fills."""
+    """Extract dark linework and close only tiny gaps in the source bitmap."""
 
     def __init__(self, threshold=95):
         self.threshold = threshold
@@ -42,10 +42,12 @@ class InkMask:
         image = cv2.imread(str(filename), cv2.IMREAD_COLOR)
         if image is None:
             raise FileNotFoundError(f"Cannot read reference: {filename}")
-        # Dark in every channel; avoid treating saturated brown/orange as ink.
         mask = (np.max(image, axis=2) < self.threshold).astype(np.uint8)
-        return cv2.morphologyEx(mask, cv2.MORPH_CLOSE,
-                               np.ones((2, 2), np.uint8))
+        # One local morphology pass, before tracing: no per-stroke repairs.
+        # An elliptical 3x3 kernel can connect tiny pixel-scale breaks,
+        # without globally pairing unrelated drawing paths.
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
 
 class ZhangSuenThinner:
@@ -286,7 +288,7 @@ class ConservativeWidthMapper:
 
 
 class ReferenceTracingPipeline:
-    def __init__(self, threshold=95, min_length=12):
+    def __init__(self, threshold=95, min_length=4):
         self.ink = InkMask(threshold)
         self.thinner = ZhangSuenThinner()
         self.tracer = SkeletonPathTracer(min_length)
@@ -344,7 +346,7 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("drawings/dog.json"))
     parser.add_argument("--report", type=Path, default=Path("drawings/dog-audit.json"))
     parser.add_argument("--threshold", type=int, default=95)
-    parser.add_argument("--min-length", type=int, default=12)
+    parser.add_argument("--min-length", type=int, default=4)
     args = parser.parse_args()
     ReferenceTracingPipeline(args.threshold, args.min_length).run(
         args.image, args.output, args.report)
