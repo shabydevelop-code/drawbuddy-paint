@@ -90,3 +90,34 @@ Outputs (local, regenerated in place):
 The image is fitted within 300x328 without distortion; unused pixels are
 white. Downscaling uses area resampling and therefore may introduce intermediate
 RGB colors at edges. This map is a raster representation, not a binary threshold.
+
+
+## 16-color pixel plan in Paint (experimental)
+
+Generate the 16-color horizontal-stroke plan from the image:
+
+```powershell
+python pixel_map.py assets/dog-reference.png --width 300 --height 328 --paint-plan-16
+```
+
+Validate the plan without opening or touching Paint:
+
+```powershell
+python main.py --paint-plan output/pixel-map/pixel-map-paint-plan16.json
+```
+
+**Optional, experimental Paint smoke test:** Open a NEW blank white maximized
+Paint canvas, then explicitly opt in to drawing only the first 20 strokes:
+
+```powershell
+python main.py --paint-plan output/pixel-map/pixel-map-paint-plan16.json --paint-plan-execute --paint-plan-limit 20 --speed 2
+```
+
+This mode calls the existing `PaintColors.select_rgb` Edit Colors dialog for
+each exact image-derived RGB color. It **does not** use or verify the existing
+Paint palette, and custom RGB UI Automation may fail on some Paint versions.
+The plan uses image-local 300x328 coordinates mapped to the Paint canvas at
+(250,155), one-pixel pencil runs, and assumes a blank white background.
+F8 cancels. No automatic GitHub publishing is performed. Do not run the
+unlimited execution until the color selector and coordinate placement have
+been verified on your machine.
