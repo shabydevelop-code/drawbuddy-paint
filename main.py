@@ -21,7 +21,7 @@ from drawbuddy.binary_painter import build_binary_drawing, build_region_drawing,
 def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_pixels=8):
     """Draw the Scene Engine's actual variable-width ink paths in Paint.
 
-    Scene coordinates are mapped into the calibrated 240x180 Paint canvas
+    Scene coordinates are mapped into a safe 360x270 Paint canvas
     area. This is an ink-only visual test, not a color scene renderer.
     """
     data = json.loads(Path(path).read_text(encoding='utf-8'))
@@ -31,10 +31,14 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
         raise ValueError('Invalid Scene Engine ink-strokes.json')
     if limit is not None and limit < 1:
         raise ValueError('--scene-limit must be positive')
-    scale = min(240 / width, 180 / height, 1.0)
+    # Draw at 1.5x the previous raster resolution. The old 240x180
+    # quantization created visible stair-steps on ears, face and tail.
+    # This remains within the calibrated Paint area on 1000x650 displays.
+    canvas_w, canvas_h = 360, 270
+    scale = min(canvas_w / width, canvas_h / height, 1.0)
     dest_w, dest_h = max(1, round(width * scale)), max(1, round(height * scale))
-    left = 310 + (240 - dest_w) // 2
-    top = 155 + (180 - dest_h) // 2
+    left = 250 + (canvas_w - dest_w) // 2
+    top = 155 + (canvas_h - dest_h) // 2
     # Preserve whole pen gestures. Never fragment them into per-pixel
     # fragments: that produces the printer-like motion seen in Paint.
     selected_paths = paths[:limit]
@@ -147,7 +151,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
         chains.append([point, point])
 
     for chain in chains:
-        # At 240x180 resolution, one-pixel details matter. Do not filter
+        # At Paint resolution, one-pixel details matter. Do not filter
         # reconstructed gestures by the former source-path length threshold.
         sizes = sorted(pixel_sizes.get(p, 1) for p in chain)
         size = sizes[len(sizes)//2]
@@ -271,6 +275,8 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     width_counts = {str(size): sum(level == size for level, _ in plan) for size in (1, 2, 3, 4)}
     report = {'source_paths': len(selected_paths),
               'planned_strokes': len(plan),
+              'canvas_resolution': [dest_w, dest_h],
+              'coordinate_scale': round(scale, 5),
               'joined_adjacent_trails': joined_trails,
               'odd_degree_vertices': len(odd_points),
               'estimated_pen_lifts': max(0, len(plan) - 1),
