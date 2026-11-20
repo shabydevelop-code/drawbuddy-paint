@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 from drawbuddy.drawing_engine import DrawingEngine
 from drawbuddy.result_publisher import ResultPublisher
-from drawbuddy.binary_painter import build_binary_drawing
+from drawbuddy.binary_painter import build_binary_drawing, build_region_drawing
 
 
 def main():
@@ -14,6 +14,7 @@ def main():
     parser.add_argument('--speed', type=float, default=None, help='Stroke speed multiplier (e.g. 4, 20, 50, 100)')
     parser.add_argument('--no-publish-result', action='store_true', help='Skip automatic Paint canvas capture and GitHub upload')
     parser.add_argument('--binary-source', type=Path, help='Draw source pixels using a binary 0/1 mask instead of vector tracing')
+    parser.add_argument('--binary-runs', action='store_true', help='Use legacy row-by-row binary printing')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
@@ -23,7 +24,8 @@ def main():
             parser.error('Specify either a drawing name or --binary-source, not both')
         if args.binary_threshold is not None and not 0 <= args.binary_threshold <= 255:
             parser.error('--binary-threshold must be 0..255')
-        drawing = build_binary_drawing(args.binary_source, threshold=args.binary_threshold)
+        drawing = (build_binary_drawing(args.binary_source, threshold=args.binary_threshold)
+                   if args.binary_runs else build_region_drawing(args.binary_source, threshold=args.binary_threshold))
         print(f'Binary 0/1: {drawing["binary"]}')
     else:
         name = args.drawing
