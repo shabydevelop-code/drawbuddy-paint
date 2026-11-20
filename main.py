@@ -468,12 +468,12 @@ def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None, color
     groups = data.get('groups')
     if (data.get('format') != 'drawbuddy-paint-stroke-plan-v1'
             or type(width) is not int or type(height) is not int
-            or width < 1 or height < 1 or width > 300 or height > 328
+            or width < 1 or height < 1 or width > 500 or height > 547
             or not isinstance(groups, list) or len(groups) != 16):
-        raise ValueError('Expected a valid 16-color plan of at most 300x328')
+        raise ValueError('Expected a valid 16-color plan of at most 500x547')
     if max_strokes is not None and max_strokes < 1:
         raise ValueError('--paint-plan-limit must be positive')
-    left, top = 250 + (300 - width) // 2, 155 + (328 - height) // 2
+    left, top = 250 + (500 - width) // 2, 155 + (547 - height) // 2
     work = []
     color_samples = []
     seen_colors = set()
