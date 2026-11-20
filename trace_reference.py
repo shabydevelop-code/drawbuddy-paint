@@ -414,7 +414,50 @@ class ReferenceTracingPipeline:
                     inside = not inside
         return inside
 
-    def run(self, source, output, fill_solid_ink=False, region_map=False):
+    @staticmethod
+    def _paint_fill_steps(regions):
+        """Conservative Paint fills: only hole-free, non-overlapping large regions.
+
+        Uses the three calibrated Paint swatches; never silently changes colors
+        to an unrelated palette entry. Black outlines are drawn afterwards.
+        """
+        swatches = {"black": (0, 0, 0), "orange": (255, 127, 39),
+                    "brown": (185, 122, 87)}
+        candidates = []
+        for region in regions:
+            if region["holes"] or region["source_area"] < 650:
+                continue
+            points, seed = region["boundary"], region["seed"]
+            if len(set(map(tuple, points))) < 3 or not ReferenceTracingPipeline._point_inside(seed, points):
+                continue
+            rgb = region["source_rgb"]
+            color = min(swatches, key=lambda name: sum(
+                (rgb[i] - swatches[name][i]) ** 2 for i in range(3)))
+            if max(abs(rgb[i] - swatches[color][i]) for i in range(3)) > 38:
+                continue
+            xs, ys = [p[0] for p in points], [p[1] for p in points]
+            if min(xs) < 310 or max(xs) > 850 or min(ys) < 155 or max(ys) > 540:
+                continue
+            if max(xs)-min(xs) < 6 or max(ys)-min(ys) < 6:
+                continue
+            candidates.append((region, color))
+        # Nested and overlapping regions cannot safely be filled by a bucket
+        # without a dedicated compositing pass. Exclude those regions.
+        safe = []
+        for region, color in candidates:
+            if any(other["id"] != region["id"] and
+                   ReferenceTracingPipeline._point_inside(
+                       region["seed"], other["boundary"])
+                   for other, _ in candidates):
+                continue
+            safe.append({
+                "name": f"Region {region['id']:03d}",
+                "tool": "closed_path", "color": color, "fill": color,
+                "width": 1, "smooth": False,
+                "points": region["boundary"], "fill_point": region["seed"]})
+        return safe
+
+    def run(self, source, output, fill_solid_ink=False, region_map=False, paint_fills=False):
         mask = self.ink.from_image(source)
         paths = self.tracer.trace(self.thinner.thin(mask))
         color_mask, region_count = self.color_regions.extract(source, mask)
@@ -459,11 +502,17 @@ class ReferenceTracingPipeline:
             raise ValueError("No drawable strokes")
         output.parent.mkdir(parents=True, exist_ok=True)
         drawing = {"name": f"Traced from {Path(source).name}", "steps": steps}
-        if region_map:
+        if region_map or paint_fills:
             drawing["analysis_regions"] = ReferenceRegionMap().extract(
                 source, self.mapper, combined)
             print(f"Source-derived color regions mapped: {len(drawing['analysis_regions'])}")
-            print("Region map is analysis-only; Paint does not yet support arbitrary RGB fills.")
+            if paint_fills:
+                fills = self._paint_fill_steps(drawing["analysis_regions"])
+                drawing["steps"] = fills + drawing["steps"]
+                print(f"Paint-ready conservative fills: {len(fills)}")
+                print("Only calibrated palette colors are filled; other RGB regions remain metadata.")
+            else:
+                print("Region map is analysis-only; Paint does not yet support arbitrary RGB fills.")
         output.write_text(json.dumps(drawing, indent=2), encoding="utf-8")
         print(f"Created {output}: {region_count} color regions, {len(paths)} ink paths, {len(color_paths)} shared color boundaries; {len(steps)} strokes")
 
@@ -476,9 +525,10 @@ def main():
     parser.add_argument("--min-length", type=int, default=2)
     parser.add_argument("--fill-solid-ink", action="store_true", help="Include isolated closed solid ink regions; excludes holes and connected outlines")
     parser.add_argument("--region-map", action="store_true", help="Store recolored connected regions and original RGB in JSON metadata")
+    parser.add_argument("--paint-fills", action="store_true", help="Generate safe fills for calibrated Paint colors before original strokes")
     args = parser.parse_args()
     ReferenceTracingPipeline(args.threshold, args.min_length).run(
-        args.image, args.output, fill_solid_ink=args.fill_solid_ink, region_map=args.region_map)
+        args.image, args.output, fill_solid_ink=args.fill_solid_ink, region_map=args.region_map, paint_fills=args.paint_fills)
 
 
 if __name__ == "__main__":
