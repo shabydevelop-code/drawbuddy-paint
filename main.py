@@ -29,9 +29,9 @@ def main():
             parser.error('--binary-threshold must be 0..255')
         if sum((args.binary_runs, args.binary_fill, args.binary_outlines, args.color_raster)) > 1:
             parser.error('Choose only one raster/outline mode')
-        planner = (build_color_raster_drawing if args.color_raster else
+        planner = (build_binary_drawing if args.binary_runs else
                    build_region_drawing if args.binary_fill else
-                   build_outline_drawing if args.binary_outlines else build_binary_drawing)
+                   build_outline_drawing if args.binary_outlines else build_color_raster_drawing)
         drawing = planner(args.binary_source, threshold=args.binary_threshold)
         print(f'Binary 0/1: {drawing["binary"]}')
     else:
