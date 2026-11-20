@@ -8,7 +8,7 @@ from .components import PaintColors, PaintTools, PaintCanvas, PaintStrokeSize, R
 
 class DrawingEngine:
     SUPPORTED_SHAPES = frozenset(('ellipse', 'rounded_rectangle'))
-    SUPPORTED_TOOLS = SUPPORTED_SHAPES | {'stroke', 'closed_path', 'raster_runs', 'brush_paths'}
+    SUPPORTED_TOOLS = SUPPORTED_SHAPES | {'stroke', 'closed_path', 'raster_runs', 'brush_paths', 'binary_region'}
 
     def __init__(self, controller=None, speed=1.0):
         self.paint = controller if controller is not None else PaintController(drawing_speed=speed)
@@ -32,6 +32,18 @@ class DrawingEngine:
                 raise ValueError(f'Step {index}: missing name')
             if step.get('tool') not in cls.SUPPORTED_TOOLS:
                 raise ValueError(f'Step {index}: unsupported tool {step.get("tool")!r}')
+            if step['tool'] == 'binary_region':
+                if step.get('color') not in ('black', 'white'):
+                    raise ValueError(f'Step {index}: invalid binary region color')
+                pts = step.get('points')
+                seed = step.get('fill_point')
+                if not isinstance(pts, list) or len(pts) < 3 or any(
+                    not isinstance(p, list) or len(p) != 2 or any(type(v) is not int or v < 0 for v in p)
+                    for p in pts):
+                    raise ValueError(f'Step {index}: invalid region contour')
+                if not isinstance(seed, list) or len(seed) != 2 or any(type(v) is not int or v < 0 for v in seed):
+                    raise ValueError(f'Step {index}: invalid region seed')
+                continue
             if step['tool'] == 'brush_paths':
                 if step.get('color') not in RGB or step.get('width') not in (1, 2, 3, 4):
                     raise ValueError(f'Step {index}: invalid brush color or size')
@@ -208,6 +220,21 @@ class DrawingEngine:
         try:
             for index, step in enumerate(steps, 1):
                 name, tool = step['name'], step['tool']
+                if tool == 'binary_region':
+                    print(f'\\n{index}/{len(steps)} {name}: filled {step["color"]} region')
+                    self.tools.select('pencil')
+                    self.colors.select_primary(step['color'])
+                    self.stroke_size.select(2)
+                    points = step['points'] + [step['points'][0]]
+                    self.canvas.stroke(points)
+                    self.tools.select('bucket')
+                    self.colors.select_primary(step['color'])
+                    x, y = step['fill_point']
+                    self.canvas.fill(x, y)
+                    actual = self.canvas.sample(x, y)
+                    if not self.color_matches(actual, RGB[step['color']], tolerance=20):
+                        raise RuntimeError(f'{name}: bucket fill verification failed: {actual}')
+                    continue
                 if tool == 'brush_paths':
                     print(f'\\n{index}/{len(steps)} {name}: {len(step["paths"])} brush paths')
                     self.tools.select('pencil')
