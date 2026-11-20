@@ -105,15 +105,24 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False):
     planned_pixels = set()
     overlap_count = 0
     out_of_bounds = 0
+    # Check actual visits by each mouse stroke. Shared vertices between
+    # adjacent segments of ONE continuous stroke are not repeated visits.
     for _, points in plan:
-        for start, end in zip(points, points[1:]):
-            for pixel in pixels_between(tuple(start), tuple(end)):
-                if not (left <= pixel[0] < left + dest_w + 2 and
-                        top <= pixel[1] < top + dest_h + 2):
-                    out_of_bounds += 1
-                if pixel in planned_pixels:
-                    overlap_count += 1
-                planned_pixels.add(pixel)
+        stroke_pixels = []
+        for segment_index, (start, end) in enumerate(zip(points, points[1:])):
+            segment = list(pixels_between(tuple(start), tuple(end)))
+            if segment_index:
+                segment = segment[1:]
+            stroke_pixels.extend(segment)
+        if not stroke_pixels:
+            stroke_pixels = [tuple(points[0])]
+        for pixel in stroke_pixels:
+            if not (left <= pixel[0] < left + dest_w + 2 and
+                    top <= pixel[1] < top + dest_h + 2):
+                out_of_bounds += 1
+            if pixel in planned_pixels:
+                overlap_count += 1
+            planned_pixels.add(pixel)
     report = {'source_paths': len(selected_paths),
               'planned_strokes': len(plan),
               'unique_pixels': len(planned_pixels),
