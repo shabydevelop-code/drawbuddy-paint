@@ -27,6 +27,7 @@ class PaintColors:
         self.primary = PaintComponent(controller, 'color_1')
         self.secondary = PaintComponent(controller, 'color_2')
         self.swatches = {name: PaintComponent(controller, name) for name in RGB}
+        self.current_primary = None
 
     def select_primary(self, name):
         """Select Color 1; preview is diagnostic, not proof of failed selection.
@@ -36,6 +37,9 @@ class PaintColors:
         """
         if name not in self.swatches:
             raise ValueError(f'Unknown color: {name}')
+        if name == self.current_primary:
+            print(f'  COLOR unchanged: {name}; skipping palette selection')
+            return True
         self.primary.click(button='left')
         self.swatches[name].click(button='left')
         time.sleep(0.3)
@@ -46,6 +50,7 @@ class PaintColors:
               f'preview_match={verified} (preview is informational)')
         if not verified:
             print('  NOTE: Color 1 preview differs; continuing to verify actual canvas fill.')
+        self.current_primary = name
         return verified
 
 
@@ -55,6 +60,17 @@ class PaintTools:
         self.ellipse = PaintComponent(controller, 'ellipse')
         self.bucket = PaintComponent(controller, 'bucket')
         self.pencil = PaintComponent(controller, 'pencil')
+        self.current = None
+
+    def select(self, name):
+        """Choose a Paint tool only when it differs from the current selection."""
+        if name not in ('pencil', 'bucket', 'ellipse', 'rounded_rectangle'):
+            raise ValueError(f'Unsupported Paint tool: {name}')
+        if self.current == name:
+            print(f'  TOOL unchanged: {name}; skipping ribbon selection')
+            return
+        getattr(self, name).click()
+        self.current = name
 
 
 class PaintStrokeSize:
