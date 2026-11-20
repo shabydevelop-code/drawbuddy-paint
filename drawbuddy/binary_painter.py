@@ -152,9 +152,9 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
     steps = [{"name": "outer silhouette only", "tool": "stroke",
               "color": "black", "width": 1, "points": points}]
 
-    # Draw the five additional foot/tail contours (INNER 4..8) alongside
-    # the four already tested details (INNER 9..12). Leave INNER 1..3 out.
-    # The approved outer silhouette and 0/1 mask are unchanged.
+    # Trace all 12 detected direct inner 0/1 boundaries, including
+    # the three larger head/body details. No gap closing or filling.
+    # Preserve the approved outer silhouette exactly.
     all_contours, hierarchy = cv2.findContours(ink, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     if hierarchy is not None:
         tree = hierarchy[0]
@@ -163,7 +163,7 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
         candidates = [i for i, h in enumerate(tree)
                       if int(h[3]) == outer_index and cv2.contourArea(all_contours[i]) >= 20]
         candidates.sort(key=lambda i: cv2.contourArea(all_contours[i]), reverse=True)
-        for preview_number in (10, 12, 11, 9, 4, 5, 6, 7, 8):
+        for preview_number in (10, 12, 11, 9, 4, 5, 6, 7, 8, 1, 2, 3):
             if len(candidates) < preview_number:
                 continue
             detail = cv2.approxPolyDP(all_contours[candidates[preview_number - 1]],
@@ -174,8 +174,8 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
                 steps.append({"name": f"INNER {preview_number} detail",
                               "tool": "stroke", "color": "black", "width": 1,
                               "points": detail_points})
-    return {"name": f"{source.stem}-outer-and-inner-4-to-12",
-            "mode": "binary-outer-and-inner-4-to-12",
+    return {"name": f"{source.stem}-outer-and-all-inner",
+            "mode": "binary-outer-and-all-inner",
             "binary": {"zero": "white", "one": "black", "width": size[0],
                        "height": size[1], "outlines": len(steps), "fill_enabled": False},
             "steps": steps}
