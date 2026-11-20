@@ -13,7 +13,7 @@ python trace_reference.py assets/dog-reference.png
 python main.py dog --speed 2
 ```
 
-The generated drawing definition is `drawings/dog.json` (local working output, not tracked in Git). Keep your working drawing definitions when cleaning local files.
+After each successful run, DrawBuddy captures the Paint drawing area and automatically commits and pushes `output/dog.png` to GitHub `main` (requires working Git credentials and network). Use `--no-publish-result` to draw without uploading. The PNG is a screenshot crop of the Paint canvas area, not a Paint Save As export.\n\nThe generated drawing definition is `drawings/dog.json` (local working output, not tracked in Git). Keep your working drawing definitions when cleaning local files.
 
 ## Optional working drawing builders
 - `build_closure_drawing.py`: conservative closure joins; outputs `drawings/dog-closure-test.json`.
