@@ -6,6 +6,7 @@ from pathlib import Path
 from drawbuddy.drawing_engine import DrawingEngine
 from drawbuddy.freehand_painter import build_freehand_drawing
 from drawbuddy.lineart_painter import build_lineart_drawing
+from drawbuddy.continuous_painter import build_continuous_color_drawing
 from drawbuddy.result_publisher import ResultPublisher
 from compare_images import compare_paint_canvas
 from drawbuddy.binary_painter import build_binary_drawing, build_region_drawing, build_outline_drawing, build_color_raster_drawing
@@ -16,6 +17,7 @@ def main():
     parser.add_argument('drawing', nargs='?', help='Drawing name (e.g. dog), without .json')
     parser.add_argument('--speed', type=float, default=None, help='Stroke speed multiplier (e.g. 4, 20, 50, 100)')
     parser.add_argument('--no-publish-result', action='store_true', help='Skip automatic Paint canvas capture and GitHub upload')
+    parser.add_argument('--continuous-source', type=Path, help='Optimize 0/1/color pixels into continuous mouse strokes')
     parser.add_argument('--lineart-source', type=Path, help='Draw black outlines only, with no fill')
     parser.add_argument('--freehand-source', type=Path, help='Draw source with contour-following freehand mouse strokes')
     parser.add_argument('--binary-source', type=Path, help='Print the source as 0/1 horizontal pixel runs (default)')
@@ -28,11 +30,16 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
     drawings_dir = root / 'drawings'
+    if args.continuous_source and (args.lineart_source or args.freehand_source or args.binary_source or args.drawing):
+        parser.error('Use --continuous-source alone')
     if args.lineart_source and (args.freehand_source or args.binary_source or args.drawing):
         parser.error('Use --lineart-source alone')
     if args.freehand_source and (args.binary_source or args.drawing):
         parser.error('Use --freehand-source alone, without a drawing or --binary-source')
-    if args.lineart_source:
+    if args.continuous_source:
+        drawing = build_continuous_color_drawing(args.continuous_source)
+        print(f'Continuous color plan: {drawing["continuous"]}')
+    elif args.lineart_source:
         drawing = build_lineart_drawing(args.lineart_source)
         print(f'Line art plan: {drawing["lineart"]}')
     elif args.freehand_source:
