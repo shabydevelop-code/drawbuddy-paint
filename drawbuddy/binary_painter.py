@@ -139,11 +139,22 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
     left = 310 + (max_width - size[0]) // 2
     top = 155 + (max_height - size[1]) // 2
     steps = []
+    # Clean staircase noise without merging separate contours or changing
+    # the binary topology. Keep tiny facial details if they enclose area.
     for contour in contours:
-        if len(contour) < 3 or cv2.arcLength(contour, True) < 6:
+        perimeter = cv2.arcLength(contour, True)
+        if len(contour) < 3 or perimeter < 6:
             continue
-        points = [[left + int(p[0][0]), top + int(p[0][1])] for p in contour]
-        points.append(points[0])
+        simplified = cv2.approxPolyDP(contour, epsilon=0.65, closed=True)
+        if len(simplified) < 3:
+            simplified = contour
+        points = [[left + int(p[0][0]), top + int(p[0][1])] for p in simplified]
+        # Remove consecutive identical points and close exactly once.
+        points = [p for i, p in enumerate(points) if i == 0 or p != points[i-1]]
+        if len(points) < 3:
+            continue
+        if points[-1] != points[0]:
+            points.append(points[0])
         steps.append({"name": f"outline {len(steps)+1}", "tool": "stroke",
                       "color": "black", "width": 1, "points": points})
     if not steps:
