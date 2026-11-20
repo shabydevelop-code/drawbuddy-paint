@@ -193,34 +193,34 @@ def recover_missing_ink(ink, rebuilt, records, excess_budget=300):
 
 def recover_missing_segments(ink, rebuilt, records, limit=120,
                              excess_budget=300):
-    """Greedily select useful missing-ink dots under a strict spill budget.
+    """Prioritize zero-spill missing-ink dots, then budgeted positive-gain dots.
 
-    Score each candidate by newly covered ink minus spill, prefer high-gain
-    candidates, and recheck gains after each accepted dot. Existing strokes
-    are never modified by this step.
+    Candidate centers come from missing pixels, not just component centroids.
+    A 3x3 convolution ranks potential radius-one coverage. Each accepted dot
+    is checked against the current raster, avoiding duplicate coverage.
     """
     missing = np.uint8((ink != 0) & (rebuilt == 0))
-    count, labels, stats, centroids = cv2.connectedComponentsWithStats(
-        missing, connectivity=8)
-    components = sorted(range(1, count),
-                        key=lambda i: (-int(stats[i, cv2.CC_STAT_AREA]), i))
-    candidates = []
-    for i in components:
-        if int(stats[i, cv2.CC_STAT_AREA]) < 2:
-            continue
-        cx, cy = centroids[i]
-        x, y = int(round(cx)), int(round(cy))
-        if not (0 <= y < ink.shape[0] and 0 <= x < ink.shape[1]) or labels[y, x] != i:
-            # Use the component's own bounding box, not a full-frame scan.
-            bx, by, bw, bh = map(int, stats[i, :4])
-            ys, xs = np.nonzero(labels[by:by+bh, bx:bx+bw] == i)
-            if len(xs) == 0:
-                continue
-            mid = len(xs)//2
-            x, y = bx + int(xs[mid]), by + int(ys[mid])
-        candidates.append((x, y))
-
-    def evaluate(x, y):
+    if not np.any(missing):
+        return rebuilt, records, 0
+    disk_kernel = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]],
+                           dtype=np.uint8)
+    gain_map = cv2.filter2D(missing, cv2.CV_16S, disk_kernel,
+                            borderType=cv2.BORDER_CONSTANT)
+    background = np.uint8(ink == 0)
+    spill_map = cv2.filter2D(background, cv2.CV_16S, disk_kernel,
+                             borderType=cv2.BORDER_CONSTANT)
+    # Only try centers on missing ink; prefer zero-spill and high gain.
+    ys, xs = np.nonzero(missing)
+    candidates = sorted(zip(xs.tolist(), ys.tolist()),
+                        key=lambda p: (int(spill_map[p[1], p[0]]) != 0,
+                                       -int(gain_map[p[1], p[0]]),
+                                       int(spill_map[p[1], p[0]]),
+                                       p[1], p[0]))
+    excess = int(np.count_nonzero((ink == 0) & (rebuilt != 0)))
+    added = 0
+    for x, y in candidates:
+        if added >= limit:
+            break
         x0, x1 = max(0, x-1), min(ink.shape[1], x+2)
         y0, y1 = max(0, y-1), min(ink.shape[0], y+2)
         yy, xx = np.ogrid[y0:y1, x0:x1]
@@ -228,18 +228,6 @@ def recover_missing_segments(ink, rebuilt, records, limit=120,
         fresh = disk & (rebuilt[y0:y1, x0:x1] == 0)
         gain = int(np.count_nonzero(fresh & (ink[y0:y1, x0:x1] != 0)))
         spill = int(np.count_nonzero(fresh & (ink[y0:y1, x0:x1] == 0)))
-        return gain, spill
-
-    # Prefer large useful gains; stable coordinate tie-breaking.
-    candidates.sort(key=lambda p: (
-        -(evaluate(*p)[0] - evaluate(*p)[1]),
-        -evaluate(*p)[0], p[1], p[0]))
-    excess = int(np.count_nonzero((ink == 0) & (rebuilt != 0)))
-    added = 0
-    for x, y in candidates:
-        if added >= limit:
-            break
-        gain, spill = evaluate(x, y)
         if gain <= spill or gain == 0 or excess + spill > excess_budget:
             continue
         cv2.circle(rebuilt, (x, y), 1, 1, -1, cv2.LINE_8)
