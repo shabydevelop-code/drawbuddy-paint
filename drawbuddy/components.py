@@ -30,28 +30,31 @@ class PaintColors:
         self.current_primary = None
 
     def select_primary(self, name):
-        """Select Color 1; preview is diagnostic, not proof of failed selection.
+        """Synchronize the real Paint Color 1 with the requested palette swatch.
 
-        The ribbon preview pixel can be black even when the swatch click worked.
-        The caller verifies the *actual canvas fill* before continuing.
+        Never trust the cached color when Paint may have changed independently.
         """
         if name not in self.swatches:
             raise ValueError(f'Unknown color: {name}')
-        if name == self.current_primary:
-            print(f'  COLOR unchanged: {name}; skipping palette selection')
-            return True
-        self.primary.click(button='left')
-        self.swatches[name].click(button='left')
-        time.sleep(0.3)
+        expected = RGB[name]
         actual = self.primary.read_pixel()
-        secondary = self.secondary.read_pixel()
-        verified = close_to(actual, RGB[name])
-        print(f'  COLOR requested={name} Color1={actual} Color2={secondary} '
-              f'preview_match={verified} (preview is informational)')
-        if not verified:
-            print('  NOTE: Color 1 preview differs; continuing to verify actual canvas fill.')
-        self.current_primary = name
-        return verified
+        if close_to(actual, expected, tolerance=12):
+            self.current_primary = name
+            print(f'  COLOR verified existing: {name} RGB={actual}')
+            return True
+        for attempt in range(1, 4):
+            self.primary.click(button='left')
+            self.swatches[name].click(button='left')
+            time.sleep(0.25)
+            actual = self.primary.read_pixel()
+            print(f'  COLOR select attempt={attempt} requested={name} Color1={actual}')
+            if close_to(actual, expected, tolerance=12):
+                self.current_primary = name
+                return True
+        self.current_primary = None
+        raise RuntimeError(
+            f'Paint Color 1 mismatch after 3 attempts: requested={name} '
+            f'expected={expected}, actual={actual}')
 
 
 class PaintTools:
