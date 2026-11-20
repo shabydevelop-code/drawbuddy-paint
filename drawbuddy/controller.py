@@ -170,6 +170,43 @@ class PaintController:
             pg.PAUSE, pg.MINIMUM_DURATION = old_pause, old_min
         time.sleep(0.01)
 
+    def raster_runs(self, runs):
+        """Draw many horizontal spans without per-run UI delays or logging.
+
+        Keep mouse down only within each ink span: connecting separate spans
+        would add unwanted lines and change the source image.
+        """
+        if not runs:
+            return
+        screen = pg.size()
+        for x1, x2, y in runs:
+            if x1 > x2:
+                raise ValueError("Invalid raster run")
+            for x in (x1, x2):
+                ax, ay = self.point(x, y)
+                if y < 148 or x < 5 or ax >= screen.width - 5 or ay >= screen.height - 35:
+                    raise ValueError(f"Raster point ({x},{y}) outside safe Paint canvas")
+        self.activate()
+        old_pause, old_min = pg.PAUSE, pg.MINIMUM_DURATION
+        pg.PAUSE, pg.MINIMUM_DURATION = 0, 0
+        # Small dwell permits Paint to process the pencil event. At high
+        # speed this remains bounded rather than introducing 300ms per run.
+        dwell = max(0.002, 0.025 / self.drawing_speed)
+        try:
+            for i, (x1, x2, y) in enumerate(runs):
+                pg.moveTo(*self.point(x1, y), duration=0)
+                pg.mouseDown(button='left')
+                try:
+                    if x1 != x2:
+                        pg.moveTo(*self.point(x2, y), duration=0)
+                    self.wait_until(time.perf_counter() + dwell)
+                finally:
+                    pg.mouseUp(button='left')
+                if (i + 1) % 500 == 0:
+                    print(f"  raster progress: {i + 1}/{len(runs)} spans")
+        finally:
+            pg.PAUSE, pg.MINIMUM_DURATION = old_pause, old_min
+
     def press(self, key):
         self.activate()
         print(f'  ACTION key={key}')
