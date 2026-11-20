@@ -67,13 +67,17 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     candidates = []
     for record in selected_paths:
         mapped = []
+        radii = []
         for point in record.get('points', []):
             if (not isinstance(point, list) or len(point) != 3 or
                     not all(isinstance(v, (int, float)) for v in point) or
                     not 0 <= point[0] < width or
                     not 0 <= point[1] < height):
                 raise ValueError('Invalid Scene Engine stroke coordinates')
-            x, y, _ = point
+            x, y, radius = point
+            if not math.isfinite(radius) or radius < 0:
+                raise ValueError('Invalid Scene Engine stroke radius')
+            radii.append(radius)
             dest = (left + round(x * scale), top + round(y * scale))
             if not mapped or mapped[-1] != dest:
                 mapped.append(dest)
@@ -92,13 +96,17 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
         if len(set(pixels)) != len(pixels):
             rejected_overlap += 1
             continue
-        candidates.append((mapped, pixels))
+        # Paint's four ribbon sizes are discrete, so use a representative
+        # scaled diameter for each intact gesture, not one UI click per point.
+        scaled_diameter = 2 * (sorted(radii)[len(radii) // 2]) * scale
+        size = 1 if scaled_diameter < 1.5 else (2 if scaled_diameter < 3 else (3 if scaled_diameter < 5 else 4))
+        candidates.append((mapped, pixels, size))
 
     # Keep each candidate's full gesture. Minor intersections are normal
     # in line art; rejecting whole paths at the first shared pixel destroys
     # the subject. Suppress only nearly redundant paths.
     candidates.sort(key=lambda item: len(item[1]), reverse=True)
-    for mapped, pixels in candidates:
+    for mapped, pixels, size in candidates:
         overlap = sum(p in visited_pixels for p in pixels)
         # Only discard paths already covered almost completely.
         if overlap / len(pixels) >= 0.90:
@@ -106,7 +114,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             duplicate_pixels += overlap
             continue
         visited_pixels.update(pixels)
-        plan.append((1, [list(p) for p in mapped]))
+        plan.append((size, [list(p) for p in mapped]))
     if not plan:
         raise ValueError('No drawable paths after mapping')
     # Validate planned motion and report natural contour intersections.
@@ -132,12 +140,14 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
                 overlap_count += 1
             planned_pixels.add(pixel)
     lengths = [len(points) for _, points in plan]
+    width_counts = {str(size): sum(level == size for level, _ in plan) for size in (1, 2, 3, 4)}
     report = {'source_paths': len(selected_paths),
               'planned_strokes': len(plan),
               'rejected_short_paths': rejected_short,
               'rejected_overlapping_paths': rejected_overlap,
               'minimum_stroke_pixels': min_stroke_pixels,
               'median_stroke_vertices': sorted(lengths)[len(lengths)//2],
+              'paint_size_levels': width_counts,
               'unique_pixels': len(planned_pixels),
               'repeated_pixel_visits': overlap_count,
               'overlaps_allowed_for_natural_contours': True,
@@ -162,11 +172,13 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     print('Use a NEW blank white maximized Paint canvas. F8 stops drawing.')
     engine.tools.select('pencil')
     engine.colors.select_primary('black')
-    engine.stroke_size.select(1)
+    # Group by size to avoid reopening the Paint ribbon for each stroke.
+    plan.sort(key=lambda item: item[0])
     try:
         for index, (size, points) in enumerate(plan, 1):
             from drawbuddy.controller import check_cancel
             check_cancel()
+            engine.stroke_size.select(size)
             engine.canvas.stroke(points)
             if index % 100 == 0:
                 print(f'Scene progress: {index}/{len(plan)}')
