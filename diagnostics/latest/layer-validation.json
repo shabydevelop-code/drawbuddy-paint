@@ -10,5 +10,15 @@
   "color_region_boundaries_are_not_strokes": true,
   "ink_centerlines_are_diagnostic_only": true,
   "vector_strokes_validated": false,
+  "stroke_reconstruction": {
+    "strokes": 18327,
+    "stroke_points": 40660,
+    "reconstruction_iou": 0.923067,
+    "missing_ink_pixels": 1039,
+    "excess_ink_pixels": 10458,
+    "stroke_width_mode": "per-point-distance-transform-radius",
+    "strokes_are_diagnostic_only": true,
+    "paint_ready": false
+  },
   "paint_ready": false
 }

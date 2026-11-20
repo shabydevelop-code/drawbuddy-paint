@@ -1,0 +1,10 @@
+{
+  "strokes": 18327,
+  "stroke_points": 40660,
+  "reconstruction_iou": 0.923067,
+  "missing_ink_pixels": 1039,
+  "excess_ink_pixels": 10458,
+  "stroke_width_mode": "per-point-distance-transform-radius",
+  "strokes_are_diagnostic_only": true,
+  "paint_ready": false
+}
