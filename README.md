@@ -44,3 +44,7 @@ Optional: `--binary-threshold 110` controls the dark-pixel cutoff; `--no-publish
 ## BinaryPainter V2 (experimental)
 
 `python main.py --binary-source assets/dog-reference.png --speed 2` now uses larger (up to 500x350) connected-region contour + bucket fills, including white nested holes. Legacy line-by-line printing is available with `--binary-runs`. Small/thin regions may be skipped. White palette coordinate is based on the existing Paint ribbon layout and must be verified on the target machine. Use a fresh blank white Paint canvas. This is experimental and not yet validated on the user's Paint installation.
+
+### Binary outline-only stage (default)
+
+Run `python main.py --binary-source assets/dog-reference.png --speed 2` on a blank white Paint canvas. This draws black outer and inner boundaries without any bucket fill. The previous experimental region filling is opt-in with `--binary-fill` and is not validated; the old raster method remains `--binary-runs`. Small details may be omitted. Review the outlines before enabling fills.
