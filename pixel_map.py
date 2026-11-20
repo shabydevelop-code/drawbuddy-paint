@@ -12,7 +12,62 @@ import cv2
 import numpy as np
 
 
-def build_pixel_map(source, output, width=300, height=328, grid_scale=4):
+
+# Standard 16-color Windows/Paint-style palette. This is an explicit
+# approximation of available basic swatches, not a UI calibration.
+PAINT_16_RGB = np.array([
+    (0, 0, 0), (128, 0, 0), (0, 128, 0), (128, 128, 0),
+    (0, 0, 128), (128, 0, 128), (0, 128, 128), (192, 192, 192),
+    (128, 128, 128), (255, 0, 0), (0, 255, 0), (255, 255, 0),
+    (0, 0, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255),
+], dtype=np.uint8)
+
+
+def export_paint_palette_preview(rgb, output, grid_scale):
+    """Map each source pixel to the nearest of 16 fixed RGB swatches."""
+    palette = PAINT_16_RGB.astype(np.float32)
+    pixels = rgb.reshape(-1, 3).astype(np.float32)
+    # Chunk to avoid large temporary arrays on bigger images.
+    ids = np.empty(len(pixels), dtype=np.uint8)
+    for start in range(0, len(pixels), 20000):
+        part = pixels[start:start + 20000]
+        squared = np.sum((part[:, None, :] - palette[None, :, :]) ** 2, axis=2)
+        ids[start:start + len(part)] = np.argmin(squared, axis=1)
+    mapped = PAINT_16_RGB[ids].reshape(rgb.shape)
+    base = output.with_name(output.stem + '-paint16')
+    cv2.imwrite(str(base.with_suffix('.png')), cv2.cvtColor(mapped, cv2.COLOR_RGB2BGR))
+    if grid_scale > 1:
+        zoom = cv2.resize(mapped, (mapped.shape[1] * grid_scale,
+                                  mapped.shape[0] * grid_scale),
+                          interpolation=cv2.INTER_NEAREST)
+        zoom[::grid_scale, :, :] = 195
+        zoom[:, ::grid_scale, :] = 195
+        cv2.imwrite(str(base.with_name(base.name + '-grid.png')),
+                    cv2.cvtColor(zoom, cv2.COLOR_RGB2BGR))
+    counts = np.bincount(ids, minlength=len(PAINT_16_RGB))
+    report = {
+        'palette': 'standard-16-rgb-approximation-not-calibrated-paint-ui',
+        'width': int(rgb.shape[1]), 'height': int(rgb.shape[0]),
+        'mean_absolute_rgb_error': round(float(np.mean(
+            np.abs(rgb.astype(np.float32) - mapped.astype(np.float32)))), 3),
+        'colors': [
+            {'rgb': '#%02X%02X%02X' % tuple(int(c) for c in color),
+             'pixels': int(count)}
+            for color, count in zip(PAINT_16_RGB, counts)
+        ],
+    }
+    base.with_suffix('.json').write_text(json.dumps(report, indent=2),
+                                         encoding='utf-8')
+    print('PAINT 16 preview (fixed standard swatches; not UI-calibrated):')
+    print(f"  used colors: {sum(c > 0 for c in counts)}/16; mean RGB error: {report['mean_absolute_rgb_error']}")
+    for entry in report['colors']:
+        if entry['pixels']:
+            print(f"  {entry['rgb']}: {entry['pixels']:,} pixels")
+    print(f'  Preview: {base.with_suffix(".png")}')
+    print(f'  Report: {base.with_suffix(".json")}')
+
+
+def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_palette_16=False):
     if width < 1 or height < 1 or grid_scale < 1:
         raise ValueError('Dimensions and grid scale must be positive')
     source = Path(source)
@@ -37,6 +92,8 @@ def build_pixel_map(source, output, width=300, height=328, grid_scale=4):
     x0, y0 = (width - dest_w) // 2, (height - dest_h) // 2
     canvas[y0:y0 + dest_h, x0:x0 + dest_w] = resized
     rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+    if paint_palette_16:
+        export_paint_palette_preview(rgb, output, grid_scale)
     # Each entry is an explicit 6-digit RGB value. White is #FFFFFF.
     rows = [['#%02X%02X%02X' % tuple(int(c) for c in pixel)
              for pixel in row] for row in rgb]
@@ -76,9 +133,11 @@ def main():
     parser.add_argument('--width', type=int, default=300)
     parser.add_argument('--height', type=int, default=328)
     parser.add_argument('--grid-scale', type=int, default=4)
+    parser.add_argument('--paint-palette-16', action='store_true',
+                        help='Export comparison using 16 fixed Paint-style colors')
     args = parser.parse_args()
     build_pixel_map(args.source, args.output, args.width, args.height,
-                    args.grid_scale)
+                    args.grid_scale, args.paint_palette_16)
 
 
 if __name__ == '__main__':
