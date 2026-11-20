@@ -7,6 +7,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from scene_strokes import export_strokes
 
 
 def _skeleton(binary):
@@ -41,6 +42,7 @@ def export_visual_layers(scene, output):
         kept[1:] = (stats[1:, cv2.CC_STAT_AREA] >= 10).astype(np.uint8)
     ink = kept[components] * 255
     centerline = _skeleton(ink)
+    stroke_report = export_strokes(ink, centerline, out)
 
     # Color-only preview uses original palette values; ink pixels are masked
     # in white, so color boundaries are not mistakenly drawn as outlines.
@@ -79,6 +81,7 @@ def export_visual_layers(scene, output):
         'color_region_boundaries_are_not_strokes': True,
         'ink_centerlines_are_diagnostic_only': True,
         'vector_strokes_validated': False,
+        'stroke_reconstruction': stroke_report,
         'paint_ready': False,
     }
     (out / 'layer-validation.json').write_text(
