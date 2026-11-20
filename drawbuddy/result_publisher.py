@@ -30,14 +30,25 @@ class ResultPublisher:
             ["git", *args], cwd=self.root, check=True, text=True,
             capture_output=True).stdout.strip()
 
-    def publish(self):
+    def publish_file(self, path):
+        """Publish only an approved output image, never unrelated files."""
         if not (self.root / ".git").exists():
             raise RuntimeError("Git checkout required to publish the result")
-        # Never stage other working-tree files.
-        self._git("add", "--", "output/dog.png")
-        if not self._git("diff", "--cached", "--name-only", "--", "output/dog.png"):
-            print("Result unchanged; no GitHub upload needed")
+        target = Path(path).resolve()
+        output_dir = (self.root / "output").resolve()
+        if target.parent != output_dir or target.name not in (
+                "dog.png", "fill-diagnostic.png"):
+            raise ValueError("Only approved output images may be published")
+        if not target.is_file():
+            raise FileNotFoundError(target)
+        relative = target.relative_to(self.root.resolve()).as_posix()
+        self._git("add", "--", relative)
+        if not self._git("diff", "--cached", "--name-only", "--", relative):
+            print(f"Result unchanged; no GitHub upload needed: {relative}")
             return
-        self._git("commit", "-m", "Update current Paint result", "--", "output/dog.png")
+        self._git("commit", "-m", f"Update {target.name}", "--", relative)
         self._git("push", "origin", "HEAD:main")
-        print("Published current result: output/dog.png")
+        print(f"Published current result: {relative}")
+
+    def publish(self):
+        self.publish_file(self.output)
