@@ -11,7 +11,7 @@ def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
     parser.add_argument('drawing', help='Drawing name (e.g. dog), without .json')
     parser.add_argument('--speed', type=float, default=None, help='Stroke speed multiplier (e.g. 4, 20, 50, 100)')
-    parser.add_argument('--publish-result', action='store_true', help='Capture Paint canvas and push output/dog.png to GitHub after successful drawing')
+    parser.add_argument('--no-publish-result', action='store_true', help='Skip automatic Paint canvas capture and GitHub upload')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
     drawings_dir = root / 'drawings'
@@ -32,7 +32,7 @@ def main():
     drawing = DrawingEngine.load(definition)
     engine = DrawingEngine(speed=float(speed))
     engine.execute(drawing, root / 'paint-diagnostic.png')
-    if args.publish_result:
+    if not args.no_publish_result:
         publisher = ResultPublisher(root)
         publisher.capture(engine.paint)
         publisher.publish()
