@@ -8,7 +8,7 @@ from .components import PaintColors, PaintTools, PaintCanvas, PaintStrokeSize, R
 
 class DrawingEngine:
     SUPPORTED_SHAPES = frozenset(('ellipse', 'rounded_rectangle'))
-    SUPPORTED_TOOLS = SUPPORTED_SHAPES | {'stroke', 'closed_path'}
+    SUPPORTED_TOOLS = SUPPORTED_SHAPES | {'stroke', 'closed_path', 'raster_runs'}
 
     def __init__(self, controller=None, speed=1.0):
         self.paint = controller if controller is not None else PaintController(drawing_speed=speed)
@@ -32,6 +32,16 @@ class DrawingEngine:
                 raise ValueError(f'Step {index}: missing name')
             if step.get('tool') not in cls.SUPPORTED_TOOLS:
                 raise ValueError(f'Step {index}: unsupported tool {step.get("tool")!r}')
+            if step['tool'] == 'raster_runs':
+                if step.get('color') not in RGB:
+                    raise ValueError(f'Step {index}: unsupported raster color')
+                runs = step.get('runs')
+                if not isinstance(runs, list) or not runs or any(
+                    not isinstance(run, list) or len(run) != 3 or
+                    any(type(v) is not int or v < 0 for v in run) or run[0] > run[1]
+                    for run in runs):
+                    raise ValueError(f'Step {index}: raster_runs requires [x_start,x_end,y] rows')
+                continue
             if step['tool'] in ('stroke', 'closed_path'):
                 if step.get('color') not in RGB:
                     raise ValueError(f'Step {index}: unsupported stroke color')
@@ -187,6 +197,18 @@ class DrawingEngine:
         try:
             for index, step in enumerate(steps, 1):
                 name, tool = step['name'], step['tool']
+                if tool == 'raster_runs':
+                    print(f'\\n{index}/{len(steps)} {name}: {len(step["runs"])} raster spans, color={step["color"]}')
+                    self.tools.select('pencil')
+                    self.colors.select_primary(step['color'])
+                    self.stroke_size.select(1)
+                    self.verify_pencil_color(step['color'])
+                    for x1, x2, y in step['runs']:
+                        if x1 == x2:
+                            self.paint.click(x1, y)
+                        else:
+                            self.canvas.stroke([[x1, y], [x2, y]])
+                    continue
                 if tool in ('stroke', 'closed_path'):
                     if tool == 'closed_path':
                         try:
