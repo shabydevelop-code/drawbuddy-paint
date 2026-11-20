@@ -55,11 +55,66 @@ def build_lineart_drawing(source, max_width=240, max_height=180):
             continue
         paths.append(coords)
         cv2.polylines(covered, [contour], closed, 255, 1)
+    # Colored region boundaries are outlines too. Extract them from source
+    # chroma (not the green annotation in the user's illustrative screenshot).
+    # Never fill a region: only draw its actual border.
+    colored_steps = []
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    saturation = hsv[:, :, 1]
+    value = hsv[:, :, 2]
+    # Orange and brown fur both have meaningful saturation. Low-saturation
+    # cream and white regions do not create spurious boundaries.
+    chroma = ((saturation >= 85) & (value >= 70)).astype(np.uint8)
+    chroma = cv2.morphologyEx(chroma, cv2.MORPH_CLOSE,
+                             np.ones((3, 3), dtype=np.uint8))
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(chroma, 8)
+    color_paths = {'brown': [], 'orange': []}
+    black_guard = cv2.dilate(covered, np.ones((3, 3), dtype=np.uint8))
+    color_covered = np.zeros_like(covered)
+    for component in range(1, count):
+        if int(stats[component, cv2.CC_STAT_AREA]) < 18:
+            continue
+        region = (labels == component).astype(np.uint8)
+        contours_color, _ = cv2.findContours(region, cv2.RETR_LIST,
+                                              cv2.CHAIN_APPROX_NONE)
+        for contour in contours_color:
+            if len(contour) < 5 or cv2.arcLength(contour, True) < 12:
+                continue
+            # Determine the actual fur color along the region boundary.
+            sample = np.zeros_like(region)
+            cv2.drawContours(sample, [contour], -1, 1, 1)
+            selected = (sample != 0) & (region != 0)
+            if not np.any(selected):
+                continue
+            median_bgr = np.median(image[selected], axis=0)
+            # Brown is darker than orange in this source palette.
+            color = 'brown' if np.mean(median_bgr) < 130 else 'orange'
+            points = [tuple(map(int, p[0])) for p in contour]
+            # Split the colored border wherever a black outline already
+            # exists, rather than retracing it in another color.
+            run = []
+            for x, y in points + [points[0]]:
+                if black_guard[y, x] or color_covered[y, x]:
+                    if len(run) >= 2:
+                        color_paths[color].append([[left + px, top + py]
+                                                   for px, py in run])
+                    run = []
+                else:
+                    run.append((x, y))
+            if len(run) >= 2:
+                color_paths[color].append([[left + px, top + py]
+                                           for px, py in run])
+            cv2.drawContours(color_covered, [contour], -1, 255, 1)
+    for color in ('brown', 'orange'):
+        if color_paths[color]:
+            colored_steps.append({'name': f'{color} fur color boundaries',
+                                  'tool': 'brush_paths', 'color': color,
+                                  'width': 1, 'paths': color_paths[color]})
     if not paths:
         raise ValueError('No significant contours detected')
     return {'name': f'Complete line art {source.stem}',
             'lineart': {'width': width, 'height': height, 'left': left,
-                        'top': top, 'paths': len(paths), 'fill': False},
-            'steps': [{'name': 'All black source contours and internal lines',
+                        'top': top, 'paths': len(paths), 'colored_paths': sum(len(s['paths']) for s in colored_steps), 'fill': False},
+            'steps': colored_steps + [{'name': 'All black source contours and internal lines',
                        'tool': 'brush_paths', 'color': 'black',
                        'width': 1, 'paths': paths}]}
