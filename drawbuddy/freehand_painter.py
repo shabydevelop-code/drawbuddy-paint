@@ -1,15 +1,73 @@
-"""Plan freehand mouse strokes from an image using contours, not raster rows."""
+"""Plan ordered, directional freehand strokes from image regions."""
 from pathlib import Path
 import cv2
 import numpy as np
 from .components import RGB
 
 
-def build_freehand_drawing(source, max_width=240, max_height=180):
-    """Generate organic contour-following pencil paths for Paint.
+def _segments(values):
+    """Contiguous occupied intervals along one stroke axis."""
+    positions = np.flatnonzero(values)
+    if len(positions) == 0:
+        return []
+    breaks = np.flatnonzero(np.diff(positions) > 1) + 1
+    return [(int(chunk[0]), int(chunk[-1])) for chunk in np.split(positions, breaks)]
 
-    Each ink region is covered by successive inset contour strokes. No
-    horizontal raster spans or bitmap pasting are used.
+
+def _region_paths(mask, left, top):
+    """Trace a region boundary, then cover it in ordered long-axis strokes."""
+    ys, xs = np.where(mask != 0)
+    if len(xs) < 4:
+        return []
+    x0, x1 = int(xs.min()), int(xs.max())
+    y0, y1 = int(ys.min()), int(ys.max())
+    horizontal = (x1 - x0) >= (y1 - y0)
+    paths = []
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True):
+        if len(contour) < 3:
+            continue
+        simplified = cv2.approxPolyDP(contour, 0.65, True)[:, 0, :]
+        coords = [[int(x) + left, int(y) + top] for x, y in simplified]
+        if len(coords) >= 3:
+            paths.append(coords + [coords[0]])
+
+    # 3px pencil strokes, spaced 3px, along the dominant region axis.
+    # Each stroke stays within its component and never joins separate islands.
+    # A deterministic serpentine ordering minimizes travel across the canvas.
+    if horizontal:
+        lines = list(range(y0 + 1, y1 + 1, 3))
+        for i, y in enumerate(lines):
+            intervals = _segments(mask[y, x0:x1 + 1] != 0)
+            if i % 2:
+                intervals = list(reversed(intervals))
+            for a, b in intervals:
+                a += x0
+                b += x0
+                if b - a < 2:
+                    continue
+                endpoints = [[a + left, y + top], [b + left, y + top]]
+                paths.append(endpoints if i % 2 == 0 else endpoints[::-1])
+    else:
+        lines = list(range(x0 + 1, x1 + 1, 3))
+        for i, x in enumerate(lines):
+            intervals = _segments(mask[y0:y1 + 1, x] != 0)
+            if i % 2:
+                intervals = list(reversed(intervals))
+            for a, b in intervals:
+                a += y0
+                b += y0
+                if b - a < 2:
+                    continue
+                endpoints = [[x + left, a + top], [x + left, b + top]]
+                paths.append(endpoints if i % 2 == 0 else endpoints[::-1])
+    return paths
+
+
+def build_freehand_drawing(source, max_width=240, max_height=180):
+    """Draw large connected shapes first, using lengthwise/crosswise strokes.
+
+    This is a shape-oriented freehand planner, not the raster printer.
     """
     source = Path(source)
     image = cv2.imread(str(source), cv2.IMREAD_COLOR)
@@ -28,34 +86,26 @@ def build_freehand_drawing(source, max_width=240, max_height=180):
     top = 155 + (max_height - height) // 2
     steps = []
     for index, name in enumerate(names[:-1]):
-        mask = (labels == index).astype(np.uint8) * 255
-        paths = []
-        # Successive inset contours produce continuous curved mouse strokes
-        # rather than the printer's horizontal pixel runs.
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        for depth in range(max(width, height)):
-            contours, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-            if not contours:
-                break
-            for contour in contours:
-                if len(contour) < 2:
-                    continue
-                arc = cv2.arcLength(contour, True)
-                epsilon = min(0.7, max(0.15, arc * 0.0008))
-                points = cv2.approxPolyDP(contour, epsilon, True)[:, 0, :]
-                coords = [[int(x) + left, int(y) + top] for x, y in points]
-                if len(coords) >= 2:
-                    coords.append(coords[0])
-                    paths.append(coords)
-            mask = cv2.erode(mask, kernel, iterations=1)
-            if not np.any(mask):
-                break
-        if paths:
-            steps.append({'name': f'Freehand {name}', 'tool': 'brush_paths',
-                          'color': name, 'width': 1, 'paths': paths})
+        mask = (labels == index).astype(np.uint8)
+        count, components, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        # Work through each connected shape in descending area order.
+        component_ids = sorted(range(1, count),
+                               key=lambda i: int(stats[i, cv2.CC_STAT_AREA]),
+                               reverse=True)
+        for component_id in component_ids:
+            if stats[component_id, cv2.CC_STAT_AREA] < 8:
+                continue
+            x, y, w, h, _ = map(int, stats[component_id])
+            local = (components[y:y+h, x:x+w] == component_id).astype(np.uint8) * 255
+            paths = _region_paths(local, left + x, top + y)
+            if paths:
+                steps.append({'name': f'Freehand {name} region {component_id}',
+                              'tool': 'brush_paths', 'color': name,
+                              'width': 3, 'paths': paths})
     if not steps:
-        raise ValueError('No drawable nonwhite contours found')
+        raise ValueError('No drawable nonwhite regions found')
     return {'name': f'Freehand {source.stem}',
             'freehand': {'width': width, 'height': height, 'left': left,
-                         'top': top, 'paths': sum(len(s['paths']) for s in steps)},
+                         'top': top, 'regions': len(steps),
+                         'paths': sum(len(s['paths']) for s in steps)},
             'steps': steps}
