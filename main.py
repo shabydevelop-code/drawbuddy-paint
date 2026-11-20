@@ -249,68 +249,11 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             ordered.append((size, points))
             cursor = points[-1]
     plan = ordered
-    # Use three stable calibrated pencil widths instead of switching for
-    # every minor source-radius fluctuation: 1=fine, 2=normal, 3=heavy.
-    variable_plan = []
-    for _, points in plan:
-        levels = sorted(pixel_sizes.get(tuple(p), 1) for p in points)
-        if not levels:
-            continue
-        source_level = levels[(3 * (len(levels) - 1)) // 4]
-        level = 1 if source_level == 1 else (2 if source_level == 2 else 3)
-        variable_plan.append((level, points))
-    before_width_merges = len(variable_plan)
-
-    # Join only paths of the SAME width that share an exact endpoint.
-    # This never draws a new connecting edge or interrupts a contour.
-    # Endpoint indices avoid rescanning every other path after each join.
-    from collections import defaultdict
-    trails = [[size, points] for size, points in variable_plan]
-    endpoints = defaultdict(set)
-    def keys(index):
-        size, points = trails[index]
-        return ((size, tuple(points[0])), (size, tuple(points[-1])))
-    for i in range(len(trails)):
-        for key in set(keys(i)):
-            endpoints[key].add(i)
-    for i in range(len(trails)):
-        if trails[i] is None:
-            continue
-        while True:
-            size, points = trails[i]
-            candidates = set(endpoints.get((size, tuple(points[0])), ()))
-            candidates.update(endpoints.get((size, tuple(points[-1])), ()))
-            candidates.discard(i)
-            j = next((j for j in sorted(candidates) if trails[j] is not None), None)
-            if j is None:
-                break
-            for key in set(keys(i)):
-                endpoints[key].discard(i)
-            for key in set(keys(j)):
-                endpoints[key].discard(j)
-            other = trails[j][1]
-            if points[-1] == other[0]:
-                combined = points + other[1:]
-            elif points[-1] == other[-1]:
-                combined = points + other[-2::-1]
-            elif points[0] == other[-1]:
-                combined = other + points[1:]
-            else:
-                assert points[0] == other[0]
-                combined = other[::-1] + points[1:]
-            trails[i] = [size, combined]
-            trails[j] = None
-            for key in set(keys(i)):
-                endpoints[key].add(i)
-    plan = [(size, points) for item in trails if item is not None
-            for size, points in [item]]
-    width_merged_trails = before_width_merges - len(plan)
-
-    # Keep connected components together as before, but within each
-    # component prefer the current pencil size when paths are nearby.
-    # Do not reorder across components or invent travel ink.
-    width_switches_estimate = sum(plan[i][0] != plan[i-1][0]
-                                  for i in range(1, len(plan)))
+    # One calibrated pencil width for the entire scene: avoid ribbon
+    # interactions between contours. Preserve the existing natural paths.
+    plan = [(2, points) for _, points in plan]
+    width_merged_trails = 0
+    width_switches_estimate = 0
     thickness_paths = []
     fill_paths = []
     missing_fill_pixels = 0
@@ -348,7 +291,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
               'solid_ink_repair_components': repair_components,
               'source_ink_run_data_available': source_ink_runs is not None,
               'variable_pencil_widths_enabled': True,
-              'width_levels_used': [1, 2, 3],
+              'width_levels_used': [2],
               'same_width_trails_merged': width_merged_trails,
               'estimated_pencil_size_changes': width_switches_estimate,
               'canvas_resolution': [dest_w, dest_h],
@@ -395,11 +338,11 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     # Calibrated pencil sizes 1..4; change only between complete gestures.
     import time
     import ctypes
-    engine.stroke_size.select(1)
+    engine.stroke_size.select(2)
     engine.tools.pencil.click()
     engine.tools.current = 'pencil'
     time.sleep(0.6)
-    print('Scene Paint uses calibrated Pencil sizes 1..4 per continuous stroke.')
+    print('Scene Paint uses constant Pencil size 2; no width changes during drawing.')
 
     def wait_for_resume():
         # controller.stroke releases mouseUp in its finally clause before
@@ -419,7 +362,6 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             try:
                 from drawbuddy.controller import check_cancel
                 check_cancel()
-                engine.stroke_size.select(size)
                 engine.canvas.stroke(points)
                 break
             except DrawingCancelled:
