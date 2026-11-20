@@ -152,6 +152,44 @@ def reconstruct(paths, distance, ink, conservative=False):
     return rebuilt, records
 
 
+
+def recover_missing_ink(ink, rebuilt, records, excess_budget=300):
+    """Expand existing stroke points only when added coverage outweighs spill.
+
+    No new paths are created. Changes are raster-validated locally and the
+    global excess budget is enforced. One bounded pass avoids quadratic work.
+    """
+    rebuilt = rebuilt.copy()
+    missing = int(np.count_nonzero((ink != 0) & (rebuilt == 0)))
+    excess = int(np.count_nonzero((ink == 0) & (rebuilt != 0)))
+    h, w = ink.shape
+    if excess >= excess_budget:
+        return rebuilt, records, 0
+    recovered = 0
+    for record in records:
+        for point in record['points']:
+            x, y, radius = point
+            # Try a single radius increment; this keeps runtime bounded.
+            new_radius = radius + 1
+            x0, x1 = max(0, x-new_radius), min(w, x+new_radius+1)
+            y0, y1 = max(0, y-new_radius), min(h, y+new_radius+1)
+            yy, xx = np.ogrid[y0:y1, x0:x1]
+            disk = (xx-x)**2 + (yy-y)**2 <= new_radius**2
+            fresh = disk & (rebuilt[y0:y1, x0:x1] == 0)
+            gained = int(np.count_nonzero(fresh & (ink[y0:y1, x0:x1] != 0)))
+            spill = int(np.count_nonzero(fresh & (ink[y0:y1, x0:x1] == 0)))
+            if gained == 0 or gained <= spill or excess + spill > excess_budget:
+                continue
+            rebuilt[y0:y1, x0:x1][disk] = 1
+            point[2] = new_radius
+            missing -= gained
+            excess += spill
+            recovered += gained
+            if missing == 0 or excess >= excess_budget:
+                return rebuilt, records, recovered
+    return rebuilt, records, recovered
+
+
 def fidelity(ink, rebuilt):
     union = (rebuilt != 0) | (ink != 0)
     intersection = (rebuilt != 0) & (ink != 0)
@@ -178,7 +216,13 @@ def export_strokes(ink, centerline, output):
     else:
         rebuilt, records = reconstruct(paths, distance, ink)
         width_mode = 'per-point-distance-transform-radius'
+    before_recovery_iou, before_recovery_missing, before_recovery_excess = fidelity(ink, rebuilt)
+    recovered_pixels = 0
+    if width_mode == 'ink-contained-radius':
+        rebuilt, records, recovered_pixels = recover_missing_ink(
+            ink, rebuilt, records, excess_budget=max(300, before_recovery_excess))
     iou, missing, excess = fidelity(ink, rebuilt)
+    assert iou >= before_recovery_iou - 1e-12
     preview = np.full((*ink.shape, 3), 255, np.uint8)
     preview[rebuilt != 0] = (20, 20, 20)
     cv2.imwrite(str(out / 'stroke-reconstruction.png'),
@@ -196,6 +240,10 @@ def export_strokes(ink, centerline, output):
               'baseline_iou': round(baseline_iou, 6),
               'baseline_missing_ink_pixels': baseline_missing,
               'baseline_excess_ink_pixels': baseline_excess,
+              'pre_recovery_iou': round(before_recovery_iou, 6),
+              'pre_recovery_missing_ink_pixels': before_recovery_missing,
+              'pre_recovery_excess_ink_pixels': before_recovery_excess,
+              'recovered_ink_pixels': recovered_pixels,
               'strokes': len(records),
               'stroke_points': sum(len(p['points']) for p in records),
               'reconstruction_iou': round(iou, 6),
