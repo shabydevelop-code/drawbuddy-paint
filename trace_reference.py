@@ -84,7 +84,7 @@ class SkeletonPathTracer:
     NEIGHBORS = [(-1, -1), (-1, 0), (-1, 1), (0, -1),
                  (0, 1), (1, -1), (1, 0), (1, 1)]
 
-    def __init__(self, min_length=12, simplify=0.65):
+    def __init__(self, min_length=2, simplify=0.65):
         self.min_length = min_length
         self.simplify = simplify
 
@@ -151,7 +151,7 @@ class SkeletonPathTracer:
 class ReferenceTracingPipeline:
     """Trace existing line centers directly to a Paint drawing definition."""
 
-    def __init__(self, threshold=95, min_length=12):
+    def __init__(self, threshold=95, min_length=2):
         self.ink = InkMask(threshold)
         self.thinner = ZhangSuenThinner()
         self.tracer = SkeletonPathTracer(min_length)
@@ -183,7 +183,7 @@ def main():
     parser.add_argument("image", type=Path)
     parser.add_argument("--output", type=Path, default=Path("drawings/dog.json"))
     parser.add_argument("--threshold", type=int, default=95)
-    parser.add_argument("--min-length", type=int, default=12)
+    parser.add_argument("--min-length", type=int, default=2)
     args = parser.parse_args()
     ReferenceTracingPipeline(args.threshold, args.min_length).run(
         args.image, args.output)
