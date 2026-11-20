@@ -17,13 +17,13 @@ except Exception:
         pass
 
 class DrawingCancelled(Exception):
-    """User requested immediate cancellation with the Escape key."""
+    """User requested immediate cancellation with the F8 key."""
 
 
 def check_cancel():
-    # Windows global key state works even while Paint has keyboard focus.
-    if u.GetAsyncKeyState(0x1B) & 0x8000:
-        raise DrawingCancelled('Drawing stopped by user (Esc)')
+    # F8 is polled globally; unlike Esc, it does not cancel Paint's active tool.
+    if u.GetAsyncKeyState(0x77) & 0x8000:
+        raise DrawingCancelled('Drawing stopped by user (F8)')
 
 
 CALLBACK = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
