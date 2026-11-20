@@ -95,12 +95,24 @@ class PaintController:
         pg.dragTo(*self.point(x2, y2), duration=0.9, button='left')
         time.sleep(0.4)
 
+    def validate_canvas_points(self, points):
+        """Fail before mouseDown if a Pencil path reaches Paint's ribbon or screen edge."""
+        screen = pg.size()
+        for x, y in points:
+            ax, ay = self.point(x, y)
+            if y < 148 or x < 5 or ax >= screen.width - 5 or ay >= screen.height - 35:
+                raise ValueError(
+                    f'Pencil point ({x},{y}) is outside the safe Paint canvas; '
+                    'drawing aborted before pressing the mouse button.'
+                )
+
     def stroke(self, points, duration=0.008):
         """Continuous Paint Pencil stroke. Speed changes stroke timing only, not UI waits."""
         if len(points) < 2:
             raise ValueError('Stroke requires at least two points')
+        self.validate_canvas_points(points)
         self.activate()
-        step_duration = duration / self.drawing_speed
+        step_duration = max(0.006, duration / self.drawing_speed)
         print(f'  ACTION stroke points={len(points)} speed={self.drawing_speed:g}x '
               f'seconds_per_segment={step_duration:.5f}')
         pg.moveTo(*self.point(*points[0]), duration=0.25)
