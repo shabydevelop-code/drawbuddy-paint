@@ -62,6 +62,64 @@ def build_binary_drawing(source, max_width=240, max_height=180, threshold=None):
     }
 
 
+def build_color_raster_drawing(source, max_width=240, max_height=180, colors=8):
+    """Quantize RGB source into color-specific 0/1 maps and horizontal runs.
+
+    White is the untouched Paint canvas. Color selection is delegated to the
+    RGB-aware drawing engine; no contours, geometry guessing, or bucket fills.
+    """
+    source = Path(source)
+    image = cv2.imread(str(source), cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(f"Cannot read image: {source}")
+    height, width = image.shape[:2]
+    scale = min(max_width / width, max_height / height, 1.0)
+    size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    image = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    # Quantize only non-white pixels. The near-white background stays blank.
+    pixels = rgb.reshape(-1, 3)
+    foreground = np.min(pixels, axis=1) < 245
+    data = pixels[foreground].astype(np.float32)
+    if not len(data):
+        raise ValueError("No non-white pixels in source")
+    k = min(colors, len(data))
+    cv2.setRNGSeed(42)
+    _, labels, centers = cv2.kmeans(
+        data, k, None,
+        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 35, 0.2),
+        3, cv2.KMEANS_PP_CENTERS)
+    centers = np.clip(np.rint(centers), 0, 255).astype(np.uint8)
+    mapped = np.full((len(pixels), 3), 255, np.uint8)
+    mapped[foreground] = centers[labels[:, 0]]
+    mapped = mapped.reshape(size[1], size[0], 3)
+    folder = Path("output")
+    folder.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(folder / "raster-source-color.png"), image)
+    cv2.imwrite(str(folder / "raster-color-quantized.png"),
+                cv2.cvtColor(mapped, cv2.COLOR_RGB2BGR))
+    left = 310 + (max_width - size[0]) // 2
+    top = 155 + (max_height - size[1]) // 2
+    steps = []
+    for center in centers:
+        binary = np.all(mapped == center, axis=2).astype(np.uint8)
+        runs = []
+        for y, row in enumerate(binary):
+            padded = np.pad(row.astype(np.int8), (1, 1))
+            starts = np.flatnonzero(np.diff(padded) == 1)
+            ends = np.flatnonzero(np.diff(padded) == -1) - 1
+            runs.extend([left + int(a), left + int(b), top + y]
+                        for a, b in zip(starts, ends))
+        if runs:
+            steps.append({"name": f"RGB {tuple(int(v) for v in center)}",
+                          "tool": "raster_runs", "color_rgb": [int(v) for v in center],
+                          "runs": runs})
+    return {"name": f"{source.stem}-color-raster", "mode": "color-raster",
+            "color": {"palette_size": len(steps), "width": size[0], "height": size[1],
+                      "quantized_preview": "output/raster-color-quantized.png"},
+            "steps": steps}
+
+
 def build_region_drawing(source, max_width=500, max_height=350, threshold=None):
     """Plan filled connected regions, including alternating black/white holes.
 
