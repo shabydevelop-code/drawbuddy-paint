@@ -1,79 +1,118 @@
-"""Order traced dog strokes by anatomical zones and nearby endpoints.
+"""Generic geometry-based stroke ordering for any traced drawing.
 
-This is a deterministic, geometry-based heuristic, not image understanding.
-Paths are never split or modified; only their execution order/direction changes.
+No object labels, fixed anatomical zones, or reference-image semantics.
+Reorders and optionally reverses open strokes; never changes their geometry.
 """
 from copy import deepcopy
 from math import dist
 
 
 class DrawingSequencePlanner:
-    """Group head-to-tail, then minimize pen-up travel inside each group."""
+    """Cluster nearby connected strokes and reduce pen-up travel."""
 
-    ZONES = ("head", "ears", "face", "collar", "body", "legs", "tail")
-
-    @staticmethod
-    def zone(point, bounds):
-        x0, y0, x1, y1 = bounds
-        w, h = max(1, x1-x0), max(1, y1-y0)
-        x, y = (point[0]-x0)/w, (point[1]-y0)/h
-        # Coordinates are relative to the dog's traced bounding box.
-        if x < 0.27 and y > 0.48:
-            return "tail"
-        if y >= 0.84:
-            return "legs"
-        if 0.38 <= y < 0.54 and x >= 0.33:
-            return "collar"
-        if y < 0.44:
-            if x < 0.34 or x > 0.83:
-                return "ears"
-            if 0.32 < x < 0.82 and 0.16 < y < 0.43:
-                return "face"
-            return "head"
-        return "body"
+    def __init__(self, join_tolerance=8):
+        self.join_tolerance = join_tolerance
 
     @staticmethod
-    def sample_points(points, count=21):
-        if len(points) <= count:
-            return points
-        return [points[round(i*(len(points)-1)/(count-1))]
-                for i in range(count)]
+    def distance_to_path(point, points):
+        """Distance to polyline segments (not just its endpoints)."""
+        px, py = point
+        best = float("inf")
+        for (ax, ay), (bx, by) in zip(points, points[1:]):
+            dx, dy = bx - ax, by - ay
+            length2 = dx*dx + dy*dy
+            t = max(0.0, min(1.0, ((px-ax)*dx+(py-ay)*dy)/length2)) if length2 else 0
+            best = min(best, dist(point, (ax+t*dx, ay+t*dy)))
+        return best
+
+    def connected(self, first, second):
+        """Connect strokes when an endpoint touches another stroke."""
+        a, b = first["points"], second["points"]
+        threshold = self.join_tolerance
+        return (min(self.distance_to_path(p, b) for p in (a[0], a[-1])) <= threshold
+                or min(self.distance_to_path(p, a) for p in (b[0], b[-1])) <= threshold)
+
+    @staticmethod
+    def choose(remaining, cursor):
+        """Nearest reachable endpoint, stable by original index on ties."""
+        def rank(item):
+            index, step = item
+            a, b = step["points"][0], step["points"][-1]
+            distance = min(dist(cursor, a), dist(cursor, b)) if cursor else 0
+            return distance, index
+        return min(remaining, key=rank)
 
     def plan(self, drawing):
         result = deepcopy(drawing)
-        steps = result["steps"]
-        strokes = [s for s in steps if s.get("tool") == "stroke"
-                   and len(s.get("points", [])) >= 2]
-        if len(strokes) != len(steps):
-            raise ValueError("Planner requires stroke-only drawing; preserving original order")
-        xs = [p[0] for step in strokes for p in step["points"]]
-        ys = [p[1] for step in strokes for p in step["points"]]
-        bounds = (min(xs), min(ys), max(xs), max(ys))
-        buckets = {name: [] for name in self.ZONES}
-        for index, step in enumerate(strokes):
-            samples = self.sample_points(step["points"])
-            counts = {zone: 0 for zone in self.ZONES}
-            for point in samples:
-                counts[self.zone(point, bounds)] += 1
-            chosen = max(self.ZONES, key=lambda z: (counts[z], -self.ZONES.index(z)))
-            buckets[chosen].append((index, step))
+        steps = result.get("steps", [])
+        if not steps:
+            raise ValueError("Drawing has no steps")
+        # Never reorder filled shapes or other operations: their layering
+        # and fill semantics can depend on the original execution order.
+        if any(s.get("tool") != "stroke" or len(s.get("points", [])) < 2
+               for s in steps):
+            raise ValueError("Generic planner requires stroke-only drawing")
+        count = len(steps)
+        parent = list(range(count))
+
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[max(ra, rb)] = min(ra, rb)
+
+        # Spatial bounding-box prefilter avoids expensive path comparisons.
+        boxes = []
+        for step in steps:
+            xs = [p[0] for p in step["points"]]
+            ys = [p[1] for p in step["points"]]
+            boxes.append((min(xs), min(ys), max(xs), max(ys)))
+        for i in range(count):
+            a = boxes[i]
+            for j in range(i+1, count):
+                b = boxes[j]
+                t = self.join_tolerance
+                if (a[2]+t < b[0] or b[2]+t < a[0] or
+                        a[3]+t < b[1] or b[3]+t < a[1]):
+                    continue
+                if self.connected(steps[i], steps[j]):
+                    union(i, j)
+
+        groups = {}
+        for i, step in enumerate(steps):
+            groups.setdefault(find(i), []).append((i, step))
+        pending = list(groups.values())
         ordered = []
         cursor = None
-        for zone in self.ZONES:
-            remaining = buckets[zone][:]
+        while pending:
+            # Choose the nearest group from current pen position; initial
+            # group is anchored to the first original stroke.
+            def group_rank(group):
+                if cursor is None:
+                    return min(i for i, _ in group), 0
+                return (min(min(dist(cursor, s["points"][0]),
+                                dist(cursor, s["points"][-1]))
+                            for _, s in group),
+                        min(i for i, _ in group))
+            group = min(pending, key=group_rank)
+            pending.remove(group)
+            remaining = group[:]
             while remaining:
-                def score(item):
-                    index, step = item
-                    a, b = step["points"][0], step["points"][-1]
-                    return (min(dist(cursor, a), dist(cursor, b)) if cursor else 0,
-                            index)
-                chosen = min(remaining, key=score)
-                remaining.remove(chosen)
-                _, step = chosen
+                item = self.choose(remaining, cursor)
+                remaining.remove(item)
+                _, step = item
                 points = step["points"]
-                if cursor and dist(cursor, points[-1]) < dist(cursor, points[0]):
-                    step["points"] = list(reversed(points))
+                if cursor is not None and dist(cursor, points[-1]) < dist(cursor, points[0]):
+                    # Closed loops are not reversed: preserving their start
+                    # and orientation avoids changing drawing semantics.
+                    if points[0] != points[-1]:
+                        step["points"] = list(reversed(points))
                 ordered.append(step)
                 cursor = step["points"][-1]
         result["steps"] = ordered
-        return result, {zone: len(buckets[zone]) for zone in self.ZONES}
+        return result, {"groups": len(groups), "strokes": count}
