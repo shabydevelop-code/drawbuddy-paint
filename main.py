@@ -121,17 +121,22 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             remaining.remove(frozenset((current, nxt)))
             chain.append(nxt)
             previous, current = current, nxt
-            if current == start:
-                break
+            # A closed visit can still have unused branches at the same
+            # junction. Continue until no unused adjacent edge remains.
         return chain
 
     chains = []
-    for point in sorted(adjacency):
-        if len(adjacency[point]) == 2:
-            continue
-        for neighbor in sorted(adjacency[point]):
-            if frozenset((point, neighbor)) in remaining:
-                chains.append(follow(point, neighbor))
+    # An undirected component needs at least odd_degree/2 open trails.
+    # Starting at odd vertices first avoids premature breaks at junctions.
+    odd_points = [p for p in sorted(adjacency) if len(adjacency[p]) % 2]
+    for point in odd_points:
+        while True:
+            options = sorted(p for p in adjacency[point]
+                             if frozenset((point, p)) in remaining)
+            if not options:
+                break
+            chains.append(follow(point, options[0]))
+    # Closed residual cycles can be drawn without an extra pen lift.
     while remaining:
         edge = min(remaining, key=lambda e: tuple(sorted(e)))
         start, neighbor = sorted(edge)
@@ -267,6 +272,8 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     report = {'source_paths': len(selected_paths),
               'planned_strokes': len(plan),
               'joined_adjacent_trails': joined_trails,
+              'odd_degree_vertices': len(odd_points),
+              'estimated_pen_lifts': max(0, len(plan) - 1),
               'ink_components': len(component_counts),
               'largest_component_strokes': max(component_counts),
               'rejected_short_paths': rejected_short,
