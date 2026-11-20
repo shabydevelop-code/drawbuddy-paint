@@ -52,12 +52,24 @@ class GapClosureValidator:
                         return delta / length
         return None
 
+    @staticmethod
+    def path_group(steps, start):
+        """Associate a detected endpoint with its source color path."""
+        for index, step in enumerate(steps):
+            if not step.get("name", "").startswith("Color boundary"):
+                continue
+            points = step.get("points", [])
+            if len(points) < 2 or points[0] == points[-1]:
+                continue
+            if tuple(start) in (tuple(points[0]), tuple(points[-1])):
+                return index
+        return None
+
     def evaluate(self, drawing):
         gaps, raster, offset = self.detector.detect(drawing)
         ox, oy = offset
         before = self.region_count(raster)
-        accepted = []
-        rejected = []
+        groups = {}
         for distance, start, end in gaps:
             direction = self.endpoint_direction(drawing["steps"], start)
             delta = np.asarray(end, dtype=float) - start
@@ -68,23 +80,41 @@ class GapClosureValidator:
             b = (int(end[0]-ox), int(end[1]-oy))
             line = np.zeros_like(raster)
             cv2.line(line, a, b, 255, 1, cv2.LINE_8)
-            # Crossing is tested strictly away from both endpoint neighborhoods.
             middle = line.copy()
             cv2.circle(middle, a, 2, 0, -1)
             cv2.circle(middle, b, 2, 0, -1)
             crosses = bool(np.any((middle > 0) & (raster > 0)))
-            joined = cv2.bitwise_or(raster, line)
-            after = self.region_count(joined)
-            creates_region = after > before
             reasons = []
             if not aligned:
                 reasons.append("direction")
             if crosses:
                 reasons.append("crossing")
-            if not creates_region:
-                reasons.append("no-new-enclosed-region")
-            item = (distance, start, end, reasons)
-            (rejected if reasons else accepted).append(item)
+            group_id = self.path_group(drawing["steps"], start)
+            groups.setdefault(group_id, []).append(
+                {"distance": distance, "start": start, "end": end,
+                 "line": line, "reasons": reasons})
+
+        accepted, rejected = [], []
+        for group_id, members in groups.items():
+            # A valid group must contain both distinct ends of the same path.
+            endpoints = {tuple(member["start"]) for member in members}
+            geometrically_valid = all(not m["reasons"] for m in members)
+            group_reasons = []
+            if group_id is None or len(endpoints) != 2:
+                group_reasons.append("incomplete-path-group")
+            if not geometrically_valid:
+                group_reasons.append("group-geometry")
+            if not group_reasons:
+                joined = raster.copy()
+                for member in members:
+                    joined = cv2.bitwise_or(joined, member["line"])
+                if self.region_count(joined) <= before:
+                    group_reasons.append("group-no-new-enclosed-region")
+            for member in members:
+                reasons = list(member["reasons"]) + group_reasons
+                item = (member["distance"], member["start"],
+                        member["end"], reasons)
+                (rejected if reasons else accepted).append(item)
         return accepted, rejected, raster, offset
 
     @staticmethod
@@ -107,11 +137,12 @@ class GapClosureValidator:
 
     def run(self, drawing, output):
         accepted, rejected, raster, offset = self.evaluate(drawing)
-        print(f"PASS candidates: {len(accepted)}; REVIEW/REJECT: {len(rejected)}")
+        print(f"PASS group members: {len(accepted)}; REVIEW/REJECT: {len(rejected)}")
         for d, start, end, reasons in accepted + rejected:
             status = "PASS" if not reasons else ",".join(reasons)
             print(f"  {status}: {start} -> {end} ({d:.1f}px)")
         self.save(output, accepted, rejected, raster, offset)
+        print("Grouped by both endpoints of the same color path.")
         print("PASS means locally plausible only; Paint behavior is unverified.")
         print("No drawing paths were modified.")
 
