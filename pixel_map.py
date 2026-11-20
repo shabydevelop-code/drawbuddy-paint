@@ -224,7 +224,68 @@ def map_sixteen_to_paint(rgb, output):
 
 
 
-def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_palette_16=False, palette_7=False, compare_palettes=False, map_paint_16=False):
+
+def export_paint_plan_16(rgb, output):
+    """Plan horizontal Paint strokes, grouped by 16 image-derived colors.
+
+    Coordinates are relative to the 300x328 image; no screen clicks are made.
+    White is treated as a prefilled canvas, so only non-background runs draw.
+    """
+    pixels = rgb.reshape(-1, 3).astype(np.float32)
+    cv2.setRNGSeed(42)
+    _, labels, centers = cv2.kmeans(
+        pixels, 16, None,
+        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.2),
+        5, cv2.KMEANS_PP_CENTERS)
+    centers = np.clip(np.rint(centers), 0, 255).astype(np.uint8)
+    ids = labels.reshape(rgb.shape[:2])
+    counts = np.bincount(ids.reshape(-1), minlength=16)
+    background = int(np.argmin(np.sum(
+        (centers.astype(np.int32) - np.array([255, 255, 255])) ** 2,
+        axis=1)))
+    groups = []
+    for index in np.argsort(-counts):
+        index = int(index)
+        color = centers[index]
+        strokes = []
+        if index != background:
+            for y, row in enumerate(ids):
+                x = 0
+                while x < len(row):
+                    if int(row[x]) != index:
+                        x += 1
+                        continue
+                    x0 = x
+                    while x + 1 < len(row) and int(row[x + 1]) == index:
+                        x += 1
+                    strokes.append([x0, y, x, y])
+                    x += 1
+        groups.append({
+            'rgb': '#%02X%02X%02X' % tuple(map(int, color)),
+            'pixels': int(counts[index]),
+            'background': index == background,
+            'strokes': strokes,
+        })
+    plan = {
+        'format': 'drawbuddy-paint-stroke-plan-v1',
+        'width': int(rgb.shape[1]), 'height': int(rgb.shape[0]),
+        'coordinate_system': 'image-local-zero-based',
+        'stroke_type': 'horizontal-inclusive-1px',
+        'background': 'white-prefilled',
+        'palette_verified_in_paint': False,
+        'note': 'Requires setting each exact RGB color in Paint before drawing. '
+                'This plan does not execute clicks or change the existing engine.',
+        'groups': groups,
+    }
+    path = output.with_name(output.stem + '-paint-plan16.json')
+    path.write_text(json.dumps(plan, separators=(',', ':')), encoding='utf-8')
+    print(f'Paint 16-color plan: {path}')
+    print(f'Colors: {len(groups)}; drawable strokes: '
+          f'{sum(len(g["strokes"]) for g in groups):,}')
+    print('Paint palette NOT calibrated; drawing engine unchanged.')
+
+
+def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_palette_16=False, palette_7=False, compare_palettes=False, map_paint_16=False, paint_plan_16=False):
     if width < 1 or height < 1 or grid_scale < 1:
         raise ValueError('Dimensions and grid scale must be positive')
     source = Path(source)
@@ -249,6 +310,8 @@ def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_p
     x0, y0 = (width - dest_w) // 2, (height - dest_h) // 2
     canvas[y0:y0 + dest_h, x0:x0 + dest_w] = resized
     rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+    if paint_plan_16:
+        export_paint_plan_16(rgb, output)
     if map_paint_16:
         map_sixteen_to_paint(rgb, output)
     if compare_palettes:
@@ -304,10 +367,13 @@ def main():
                         help='Compare 4, 6, 8, 12, 16 color palettes with error metrics')
     parser.add_argument('--map-paint-16', action='store_true',
                         help='Export faithful 16-color preview and Paint color requirements')
+    parser.add_argument('--paint-plan-16', action='store_true',
+                        help='Export grouped 1px horizontal strokes for 16 image colors')
     args = parser.parse_args()
     build_pixel_map(args.source, args.output, args.width, args.height,
                     args.grid_scale, args.paint_palette_16, args.palette_7,
-                    args.compare_palettes, args.map_paint_16)
+                    args.compare_palettes, args.map_paint_16,
+                    args.paint_plan_16)
 
 
 if __name__ == '__main__':
