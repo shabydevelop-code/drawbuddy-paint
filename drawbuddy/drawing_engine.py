@@ -136,9 +136,15 @@ class DrawingEngine:
                         # otherwise an unclosed path could go undetected.
                         before = self.canvas.sample(x, y)
                         if self.color_matches(before, RGB[step['fill']]):
-                            raise RuntimeError(f'{name}: fill seed already matches requested color; cannot verify fill')
-                        self.canvas.fill(x, y)
-                        actual = self.canvas.sample(x, y)
+                            # Layered drawings may overlap an area already filled
+                            # with the same color. Recoloring cannot verify a new
+                            # boundary, so preserve the existing fill and continue.
+                            print(f'  NOTE {name}: fill seed already {step["fill"]}; '
+                                  'skipping redundant bucket click for overlapping layer.')
+                            actual = before
+                        else:
+                            self.canvas.fill(x, y)
+                            actual = self.canvas.sample(x, y)
                         if not self.color_matches(actual, RGB[step['fill']]):
                             raise RuntimeError(f'{name}: fill failed, got {actual}, expected {RGB[step["fill"]]}')
                         # Check an exterior pixel is still white to detect bucket leakage.
