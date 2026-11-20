@@ -37,7 +37,7 @@ class ResultPublisher:
         target = Path(path).resolve()
         output_dir = (self.root / "output").resolve()
         if target.parent != output_dir or target.name not in (
-                "dog.png", "fill-diagnostic.png", "gap-diagnostic.png", "closure-diagnostic.png", "closure-preview.png", "closure-color-diagnostic.png", "color-preview.png", "color-diagnostic.png", "leak-diagnostic.png", "individual-leaks.png", "group-leaks.png", "accuracy-diagnostic.png", "stroke-source-diagnostic.png", "ink-simplification-diagnostic.png", "ink-pipeline-diagnostic.png"):
+                "dog.png", "fill-diagnostic.png", "gap-diagnostic.png", "closure-diagnostic.png", "closure-preview.png", "closure-color-diagnostic.png", "color-preview.png", "color-diagnostic.png", "leak-diagnostic.png", "individual-leaks.png", "group-leaks.png", "accuracy-diagnostic.png", "stroke-source-diagnostic.png", "ink-simplification-diagnostic.png", "ink-pipeline-diagnostic.png", "ink-topology-diagnostic.png"):
             raise ValueError("Only approved output images may be published")
         if not target.is_file():
             raise FileNotFoundError(target)
