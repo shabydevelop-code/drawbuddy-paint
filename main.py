@@ -283,14 +283,16 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     # These accent strokes are last: the main recognizable contours remain
     # continuous during the drawing process.
     plan.extend(thickness_paths)
-    # Complete source ink at Paint resolution, not just the skeleton.
-    # Only fill pixels that no existing stroke covers. This preserves the
-    # continuous outline gestures while restoring solid spots and thick lines.
+    # Only repair substantial missing SOLID ink regions with closed contours.
+    # Never raster-print all missing pixels as horizontal mouse strokes.
     source_ink_runs = data.get('ink_runs')
     fill_paths = []
     missing_fill_pixels = 0
+    repair_components = 0
     if source_ink_runs is not None and limit is None:
-        target_ink = set()
+        import cv2
+        import numpy as np
+        target = np.zeros((dest_h, dest_w), dtype=np.uint8)
         for run in source_ink_runs:
             if (not isinstance(run, list) or len(run) != 3 or
                     not all(isinstance(v, int) for v in run)):
@@ -298,33 +300,48 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             y, x0, x1 = run
             if not (0 <= y < height and 0 <= x0 <= x1 < width):
                 raise ValueError('Source ink run outside image')
-            yy = top + round(y * scale)
-            xa = left + round(x0 * scale)
-            xb = left + round(x1 * scale)
-            target_ink.update((x, yy) for x in range(xa, xb + 1))
-        existing = set()
+            yy = round(y * scale)
+            xa, xb = round(x0 * scale), round(x1 * scale)
+            if 0 <= yy < dest_h:
+                target[yy, max(0, xa):min(dest_w, xb + 1)] = 1
+        existing = np.zeros_like(target)
         for _, points in plan:
-            if len(points) == 1:
-                existing.add(tuple(points[0]))
             for a, b in zip(points, points[1:]):
-                existing.update(pixels_between(tuple(a), tuple(b)))
-        missing = target_ink - existing
-        missing_fill_pixels = len(missing)
-        # Horizontal runs guarantee that every added pixel belongs to the
-        # actual source ink. No guessed offsets or perpendicular scribbles.
-        by_row = {}
-        for x, y in missing:
-            by_row.setdefault(y, []).append(x)
-        for y in sorted(by_row):
-            xs = sorted(by_row[y])
-            start = prev = xs[0]
-            for x in xs[1:] + [None]:
-                if x is not None and x == prev + 1:
-                    prev = x
-                    continue
-                fill_paths.append((1, [[start, y], [prev, y]]))
-                if x is not None:
-                    start = prev = x
+                x0, y0 = a[0] - left, a[1] - top
+                x1, y1 = b[0] - left, b[1] - top
+                cv2.line(existing, (x0, y0), (x1, y1), 1, 1)
+            if len(points) == 1:
+                x, y = points[0]
+                if 0 <= x-left < dest_w and 0 <= y-top < dest_h:
+                    existing[y-top, x-left] = 1
+        missing = np.uint8((target != 0) & (existing == 0))
+        missing_fill_pixels = int(np.count_nonzero(missing))
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(
+            missing, connectivity=8)
+        for component_id in range(1, count):
+            x, y, w, h, area = map(int, stats[component_id])
+            # A thin missing line is not a solid spot; preserve the original
+            # centerline geometry instead of making it printer-like.
+            if area < 10 or min(w, h) < 3:
+                continue
+            region = np.uint8(labels[y:y+h, x:x+w] == component_id)
+            repair_components += 1
+            # Follow actual boundaries of missing solid regions. Eroded
+            # contours supply at most two inner passes for thicker spots.
+            for depth in range(3):
+                if not np.any(region):
+                    break
+                contours, _ = cv2.findContours(
+                    region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                for contour in contours:
+                    coords = [[left+x+int(p[0][0]), top+y+int(p[0][1])]
+                              for p in contour]
+                    if len(coords) >= 3:
+                        coords.append(coords[0])
+                        fill_paths.append((1, coords))
+                region = cv2.erode(region, np.ones((3, 3), np.uint8),
+                                   borderType=cv2.BORDER_CONSTANT,
+                                   borderValue=0)
         plan.extend(fill_paths)
     # Validate planned motion and report natural contour intersections.
     planned_pixels = set()
@@ -354,7 +371,8 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
               'planned_strokes': len(plan),
               'thickness_accent_strokes': len(thickness_paths),
               'source_ink_fill_strokes': len(fill_paths),
-              'source_ink_pixels_restored': missing_fill_pixels,
+              'source_ink_pixels_missing_before_repair': missing_fill_pixels,
+              'solid_ink_repair_components': repair_components,
               'source_ink_run_data_available': source_ink_runs is not None,
               'canvas_resolution': [dest_w, dest_h],
               'coordinate_scale': round(scale, 5),
