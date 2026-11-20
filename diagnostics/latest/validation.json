@@ -1,0 +1,60 @@
+{
+  "source": "assets\\dog-reference.png",
+  "size": [
+    1199,
+    1312
+  ],
+  "colors": 24,
+  "shapes": 1476,
+  "mean_absolute_error": 1.456,
+  "max_channel_error": 67,
+  "vector_geometry": {
+    "exact_pixel_coverage": 1.0,
+    "uncovered_pixels": 0,
+    "overlap_pixels": 0,
+    "mismatched_pixels": 0,
+    "geometry_type": "exact_pixel_cells",
+    "paint_ready": false
+  },
+  "path_network": {
+    "unique_edges": 153123,
+    "traced_edges": 153123,
+    "paths": 61930,
+    "edge_coverage": 1.0,
+    "smooth_curves_ready": false,
+    "paint_ready": false
+  },
+  "simplification": {
+    "candidate_changed_pixels": 1874,
+    "candidate_changed_fraction": 0.001191,
+    "max_changed_fraction": 0.015,
+    "candidate_accepted": true,
+    "raw_vertices": 167961,
+    "preview_vertices": 127782,
+    "preview_only": true,
+    "bezier_validated": false,
+    "paint_ready": false
+  },
+  "visual_layers": {
+    "method": "dark-neutral-ink-separation",
+    "ink_luminance_threshold": 105,
+    "ink_chroma_threshold": 100,
+    "min_ink_component_pixels": 10,
+    "ink_pixels": 138984,
+    "centerline_pixels": 14176,
+    "excluded_dark_noise_pixels": 1,
+    "layer_reconstruction_mismatch_pixels": 0,
+    "color_region_boundaries_are_not_strokes": true,
+    "ink_centerlines_are_diagnostic_only": true,
+    "vector_strokes_validated": false,
+    "paint_ready": false
+  },
+  "shared_boundary_network": {
+    "internal_unique_edges": 148101,
+    "canvas_perimeter_edges": 5022,
+    "boundary_coordinate_system": "integer_pixel_cell_edges"
+  },
+  "vector_runs": 83360,
+  "paint_ready": false,
+  "note": "SVG is exact pixel-cell geometry, not yet smoothed into drawable curves. Paint execution is disabled."
+}

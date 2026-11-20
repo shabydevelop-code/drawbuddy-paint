@@ -1,0 +1,14 @@
+{
+  "method": "dark-neutral-ink-separation",
+  "ink_luminance_threshold": 105,
+  "ink_chroma_threshold": 100,
+  "min_ink_component_pixels": 10,
+  "ink_pixels": 138984,
+  "centerline_pixels": 14176,
+  "excluded_dark_noise_pixels": 1,
+  "layer_reconstruction_mismatch_pixels": 0,
+  "color_region_boundaries_are_not_strokes": true,
+  "ink_centerlines_are_diagnostic_only": true,
+  "vector_strokes_validated": false,
+  "paint_ready": false
+}
