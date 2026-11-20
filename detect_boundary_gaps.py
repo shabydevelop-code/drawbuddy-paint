@@ -117,11 +117,15 @@ def main():
     parser.add_argument("--output", type=Path,
                         default=Path("output/gap-diagnostic.png"))
     parser.add_argument("--max-gap", type=float, default=12)
+    parser.add_argument("--publish-diagnostic", action="store_true", help="Publish diagnostic image to GitHub")
     args = parser.parse_args()
     if not 2 <= args.max_gap <= 50:
         parser.error("--max-gap must be between 2 and 50")
     drawing = json.loads(args.drawing.read_text(encoding="utf-8"))
     BoundaryGapDetector(max_gap=args.max_gap).run(drawing, args.output)
+    if args.publish_diagnostic:
+        from drawbuddy.result_publisher import ResultPublisher
+        ResultPublisher(Path(__file__).resolve().parent).publish_file(args.output)
 
 
 if __name__ == "__main__":
