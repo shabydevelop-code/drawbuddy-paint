@@ -172,7 +172,60 @@ def compare_palette_sizes(rgb, output, sizes=(4, 6, 8, 12, 16)):
     print(f'Palette comparison: {path}')
 
 
-def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_palette_16=False, palette_7=False, compare_palettes=False):
+
+def map_sixteen_to_paint(rgb, output):
+    """Compare 16 learned colors with the provisional fixed Paint swatches."""
+    pixels = rgb.reshape(-1, 3).astype(np.float32)
+    cv2.setRNGSeed(42)
+    _, labels, centers = cv2.kmeans(
+        pixels, 16, None,
+        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.2),
+        5, cv2.KMEANS_PP_CENTERS)
+    learned = np.clip(np.rint(centers), 0, 255).astype(np.uint8)
+    palette = PAINT_16_RGB.astype(np.float32)
+    distances = np.sum((learned.astype(np.float32)[:, None, :] -
+                        palette[None, :, :]) ** 2, axis=2)
+    targets = np.argmin(distances, axis=1)
+    ids = labels.reshape(-1)
+    mapped = PAINT_16_RGB[targets[ids]].reshape(rgb.shape)
+    counts = np.bincount(ids, minlength=16)
+    order = np.argsort(-counts)
+    rows = []
+    for i in order:
+        source = learned[i]
+        target = PAINT_16_RGB[targets[i]]
+        rows.append({
+            'source_rgb': '#%02X%02X%02X' % tuple(map(int, source)),
+            'paint_rgb': '#%02X%02X%02X' % tuple(map(int, target)),
+            'pixels': int(counts[i]),
+            'rgb_distance': round(float(np.sqrt(distances[i, targets[i]])), 2),
+        })
+    base = output.with_name(output.stem + '-palette16-paint-mapping')
+    cv2.imwrite(str(base.with_suffix('.png')),
+                cv2.cvtColor(mapped, cv2.COLOR_RGB2BGR))
+    report = {
+        'palette': 'provisional-standard-16-swatches-not-verified-against-user-paint',
+        'source_color_count': 16,
+        'mapped_unique_color_count': int(len(set(int(v) for v in targets))),
+        'mean_absolute_rgb_error': round(float(np.mean(
+            np.abs(rgb.astype(np.float32) - mapped.astype(np.float32)))), 4),
+        'mapping': rows,
+        'warning': 'Multiple source colors may map to the same swatch. '
+                   'Actual Paint UI palette must be verified before drawing.',
+    }
+    base.with_suffix('.json').write_text(
+        json.dumps(report, indent=2), encoding='utf-8')
+    print('16 learned colors -> provisional Paint swatches:')
+    for row in rows:
+        print(f"  {row['source_rgb']} -> {row['paint_rgb']} "
+              f"({row['pixels']:,} pixels)")
+    print(f"Distinct swatches used: {report['mapped_unique_color_count']}; "
+          f"RGB MAE: {report['mean_absolute_rgb_error']}")
+    print(f'Preview: {base.with_suffix(".png")}')
+    print(f'Mapping: {base.with_suffix(".json")}')
+
+
+def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_palette_16=False, palette_7=False, compare_palettes=False, map_paint_16=False):
     if width < 1 or height < 1 or grid_scale < 1:
         raise ValueError('Dimensions and grid scale must be positive')
     source = Path(source)
@@ -197,6 +250,8 @@ def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_p
     x0, y0 = (width - dest_w) // 2, (height - dest_h) // 2
     canvas[y0:y0 + dest_h, x0:x0 + dest_w] = resized
     rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+    if map_paint_16:
+        map_sixteen_to_paint(rgb, output)
     if compare_palettes:
         compare_palette_sizes(rgb, output)
     if palette_7:
@@ -248,10 +303,12 @@ def main():
                         help='Generate an image and indexed pixel map with 7 computed colors')
     parser.add_argument('--compare-palettes', action='store_true',
                         help='Compare 4, 6, 8, 12, 16 color palettes with error metrics')
+    parser.add_argument('--map-paint-16', action='store_true',
+                        help='Map 16 learned colors to provisional fixed Paint swatches')
     args = parser.parse_args()
     build_pixel_map(args.source, args.output, args.width, args.height,
                     args.grid_scale, args.paint_palette_16, args.palette_7,
-                    args.compare_palettes)
+                    args.compare_palettes, args.map_paint_16)
 
 
 if __name__ == '__main__':
