@@ -28,33 +28,41 @@ def build_lineart_drawing(source, max_width=240, max_height=180):
     candidates.sort(key=lambda item: -cv2.arcLength(item[0], item[1]))
     left = 310 + (max_width - width) // 2
     top = 155 + (max_height - height) // 2
-    covered = np.zeros((height, width), dtype=np.uint8)
+    # Merge dark-ink contours and Canny edges BEFORE planning strokes.
+    # Thinning prevents two pencil tracks along opposite sides of one line.
+    combined = np.maximum(dark, edges)
+    skeleton = np.zeros_like(combined)
+    work = combined.copy()
+    kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+    while cv2.countNonZero(work):
+        eroded = cv2.erode(work, kernel)
+        rim = cv2.subtract(work, cv2.dilate(eroded, kernel))
+        skeleton = cv2.bitwise_or(skeleton, rim)
+        work = eroded
+    # Retain the source line geometry as a single pixel-wide coverage map.
+    covered = skeleton.copy()
     paths = []
-    for contour, closed in candidates:
+    contours_skeleton, _ = cv2.findContours(skeleton, cv2.RETR_LIST,
+                                            cv2.CHAIN_APPROX_NONE)
+    drawn = np.zeros_like(skeleton)
+    for contour in sorted(contours_skeleton,
+                          key=lambda p: -cv2.arcLength(p, False)):
         if len(contour) < 3:
             continue
-        length = cv2.arcLength(contour, closed)
-        if length < 5:
-            continue
-        # Do not redraw the same black contour when it is present in both
-        # the edge map and the dark-ink map.
-        contour_mask = np.zeros_like(covered)
-        cv2.polylines(contour_mask, [contour], closed, 255, 1)
-        count = cv2.countNonZero(contour_mask)
-        if not count:
-            continue
-        overlap = cv2.countNonZero(cv2.bitwise_and(contour_mask, covered))
-        if overlap / count > 0.55:
-            continue
-        # Retain the actual pixel-by-pixel geometry; simplification previously
-        # removed small but important leg and face segments.
-        coords = [[left + int(p[0][0]), top + int(p[0][1])] for p in contour]
-        if closed and len(coords) >= 3:
-            coords.append(coords[0])
-        if len(coords) < 2:
-            continue
-        paths.append(coords)
-        cv2.polylines(covered, [contour], closed, 255, 1)
+        points = [(int(p[0][0]), int(p[0][1])) for p in contour]
+        # Split at already-drawn pixels, instead of rejecting a whole
+        # contour and losing its unique interior line segments.
+        run = []
+        for x, y in points:
+            if drawn[y, x]:
+                if len(run) >= 3:
+                    paths.append([[left + px, top + py] for px, py in run])
+                run = []
+                continue
+            drawn[y, x] = 255
+            run.append((x, y))
+        if len(run) >= 3:
+            paths.append([[left + px, top + py] for px, py in run])
     # Colored region boundaries are outlines too. Extract them from source
     # chroma (not the green annotation in the user's illustrative screenshot).
     # Never fill a region: only draw its actual border.
