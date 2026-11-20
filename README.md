@@ -58,3 +58,14 @@ python scene_engine.py assets/dog-reference.png; if ($LASTEXITCODE -eq 0) { pyth
 ```
 
 The publisher requires branch `main`, refuses to overwrite uncommitted changes in `diagnostics/latest`, stages only that directory, and pushes to `origin/main` when `--push` is specified. Run `git pull --ff-only origin main` before publishing. Images may be reviewed directly from GitHub without attaching them to a chat.
+
+
+## Scene Engine ink drawing in Microsoft Paint (experimental)
+
+After running `python scene_engine.py assets/dog-reference.png`, open a **new blank white Paint canvas**, maximize Paint, and run:
+
+```powershell
+python main.py --scene-strokes output/scene-engine/ink-strokes.json --speed 20
+```
+
+This uses the actual latest Scene Engine ink paths, **not** the legacy centerline planner. It maps full-resolution ink geometry to the existing 240x180 calibrated Paint drawing area. Stroke widths are approximated using Paint pencil sizes 1–4; the offline 98% raster IoU does **not** imply identical Paint fidelity. The complete drawing can take considerable time. For a brief mouse-control smoke test, add `--scene-limit 100`; that renders only a subset, not the whole dog. Press F8 to stop. Keep the Paint canvas blank and do not use the mouse during drawing. No automatic result upload occurs in this experimental mode.
