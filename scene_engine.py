@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import cv2
 import numpy as np
+from scene_paths import export_paths
 
 
 def extract_scene(source, colors=24):
@@ -162,6 +163,7 @@ def main():
     runs = pixel_cell_geometry(scene)
     svg_scene(scene, runs, output / 'scene.svg')
     vector_metrics, vector_difference = validate_vector_geometry(scene, runs)
+    path_metrics = export_paths(scene, output)
     cv2.imwrite(str(output / 'vector-difference.png'), vector_difference)
     # Avoid enormous JSON arrays: save the exact pixel labels separately.
     labels = np.asarray(scene['labels'], np.uint8)
@@ -174,6 +176,7 @@ def main():
               'mean_absolute_error': round(float(delta.mean()), 3),
               'max_channel_error': int(delta.max()),
               'vector_geometry': vector_metrics,
+              'path_network': path_metrics,
               'shared_boundary_network': shared_boundary_report(scene),
               'vector_runs': len(runs),
               'paint_ready': False,
