@@ -4,12 +4,14 @@ import json
 import math
 from pathlib import Path
 from drawbuddy.drawing_engine import DrawingEngine
+from drawbuddy.result_publisher import ResultPublisher
 
 
 def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
     parser.add_argument('drawing', help='Drawing name (e.g. dog), without .json')
     parser.add_argument('--speed', type=float, default=None, help='Stroke speed multiplier (e.g. 4, 20, 50, 100)')
+    parser.add_argument('--publish-result', action='store_true', help='Capture Paint canvas and push output/dog.png to GitHub after successful drawing')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
     drawings_dir = root / 'drawings'
@@ -28,7 +30,12 @@ def main():
     if type(speed) not in (float, int) or not math.isfinite(speed) or speed <= 0 or speed > 100:
         parser.error('drawing speed must be greater than 0 and at most 100')
     drawing = DrawingEngine.load(definition)
-    DrawingEngine(speed=float(speed)).execute(drawing, root / 'paint-diagnostic.png')
+    engine = DrawingEngine(speed=float(speed))
+    engine.execute(drawing, root / 'paint-diagnostic.png')
+    if args.publish_result:
+        publisher = ResultPublisher(root)
+        publisher.capture(engine.paint)
+        publisher.publish()
 
 
 if __name__ == '__main__':
