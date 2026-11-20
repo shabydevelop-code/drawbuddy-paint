@@ -173,7 +173,10 @@ class PaintController:
     def press(self, key):
         self.activate()
         print(f'  ACTION key={key}')
-        pg.press(key)
+        if '+' in key:
+            pg.hotkey(*(part.strip() for part in key.split('+')))
+        else:
+            pg.press(key)
         time.sleep(0.35)
 
     def pixel(self, x, y):
