@@ -69,3 +69,24 @@ python main.py --scene-strokes output/scene-engine/ink-strokes.json --speed 20
 ```
 
 This uses the actual latest Scene Engine ink paths, **not** the legacy centerline planner. It maps full-resolution ink geometry to the existing 240x180 calibrated Paint drawing area. Stroke widths are approximated using Paint pencil sizes 1–4; the offline 98% raster IoU does **not** imply identical Paint fidelity. The complete drawing can take considerable time. For a brief mouse-control smoke test, add `--scene-limit 100`; that renders only a subset, not the whole dog. Press F8 to stop. Keep the Paint canvas blank and do not use the mouse during drawing. No automatic result upload occurs in this experimental mode.
+
+
+## Full RGB pixel map (independent experiment)
+
+Generate a complete 300x328 pixel map from the original image. Every cell
+contains its own RGB hex color, including white. This does **not** draw in
+Paint, trace outlines, or modify the existing drawing engine.
+
+```powershell
+python pixel_map.py assets/dog-reference.png --width 300 --height 328
+```
+
+Outputs (local, regenerated in place):
+- `output/pixel-map/pixel-map.json` — 328 rows of 300 RGB color values.
+- `output/pixel-map/pixel-map.png` — exact map at 300x328.
+- `output/pixel-map/pixel-map-grid.png` — enlarged nearest-neighbor
+  inspection view with cell boundaries.
+
+The image is fitted within 300x328 without distortion; unused pixels are
+white. Downscaling uses area resampling and therefore may introduce intermediate
+RGB colors at edges. This map is a raster representation, not a binary threshold.
