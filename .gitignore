@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+paint-diagnostic.png
+drawings/*.json
+!drawings/.gitkeep
