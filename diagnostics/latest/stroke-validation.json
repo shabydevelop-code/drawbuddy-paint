@@ -1,10 +1,15 @@
 {
-  "strokes": 18327,
-  "stroke_points": 40660,
-  "reconstruction_iou": 0.923067,
-  "missing_ink_pixels": 1039,
-  "excess_ink_pixels": 10458,
-  "stroke_width_mode": "per-point-distance-transform-radius",
+  "original_strokes": 18327,
+  "joined_strokes": 5059,
+  "baseline_iou": 0.923067,
+  "baseline_missing_ink_pixels": 1039,
+  "baseline_excess_ink_pixels": 10458,
+  "strokes": 5059,
+  "stroke_points": 27392,
+  "reconstruction_iou": 0.977764,
+  "missing_ink_pixels": 2937,
+  "excess_ink_pixels": 157,
+  "stroke_width_mode": "ink-contained-radius",
   "strokes_are_diagnostic_only": true,
   "paint_ready": false
 }
