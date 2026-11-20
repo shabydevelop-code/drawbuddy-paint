@@ -193,14 +193,20 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
                          dtype=np.int32).reshape((-1, 1, 2))
         cv2.polylines(existing, [local], False, 255, 3)
     added = 0
+    leg_added = 0
     for contour in dark_contours:
         area = cv2.contourArea(contour)
-        if area < 2 or area > 1000 or len(contour) < 4:
+        if area < 2 or len(contour) < 4:
             continue
         x, y, w, h = cv2.boundingRect(contour)
-        # Only add compact facial details from the upper part of the image.
-        # Avoid re-tracing large outer edges, body shading, or the collar.
-        if y + h > size[1] * 0.48 or w > size[0] * 0.30 or h > size[1] * 0.22:
+        # Preserve the facial-detail selection; additionally admit compact
+        # lower-body strokes from the strict 0/1 mask for leg separation.
+        face_detail = (area <= 1000 and y + h <= size[1] * 0.48
+                       and w <= size[0] * 0.30 and h <= size[1] * 0.22)
+        leg_detail = (size[1] * 0.50 <= y and y + h <= size[1]
+                      and area <= 2500 and w <= size[0] * 0.35
+                      and h <= size[1] * 0.48)
+        if not (face_detail or leg_detail):
             continue
         contour_mask = np.zeros(ink.shape, dtype=np.uint8)
         cv2.polylines(contour_mask, [contour], True, 255, 1)
@@ -219,9 +225,12 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
                       "color": "black", "width": 1, "points": detail_points})
         cv2.polylines(existing, [contour], True, 255, 3)
         added += 1
+        if leg_detail and not face_detail:
+            leg_added += 1
     return {"name": f"{source.stem}-dual-binary-contours",
             "mode": "binary-dual-contours",
             "binary": {"zero": "white", "one": "black", "width": size[0],
                        "height": size[1], "outlines": len(steps), "dark_threshold": 80,
-                       "dark_details_added": added, "fill_enabled": False},
+                       "dark_details_added": added, "leg_details_added": leg_added,
+                       "fill_enabled": False},
             "steps": steps}
