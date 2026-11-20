@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 from drawbuddy.drawing_engine import DrawingEngine
 from drawbuddy.result_publisher import ResultPublisher
+from compare_images import compare_paint_canvas
 from drawbuddy.binary_painter import build_binary_drawing, build_region_drawing, build_outline_drawing, build_color_raster_drawing
 
 
@@ -18,6 +19,7 @@ def main():
     parser.add_argument('--binary-runs', action='store_true', help='Explicitly select the default 0/1 row-by-row printing')
     parser.add_argument('--binary-outlines', action='store_true', help='Use the previous experimental contour drawing')
     parser.add_argument('--color-raster', action='store_true', help='Print RGB colors as separate 0/1 raster runs')
+    parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
@@ -58,6 +60,21 @@ def main():
         parser.error('drawing speed must be greater than 0 and at most 100')
     engine = DrawingEngine(speed=float(speed))
     engine.execute(drawing, root / 'paint-diagnostic.png')
+    if args.binary_source and not args.no_compare:
+        # Compare the actual pixels against the resized source, not the
+        # quantized palette preview. The difference includes palette loss.
+        info = drawing.get('color') or drawing.get('binary')
+        if not info or 'width' not in info or 'height' not in info:
+            raise RuntimeError('Raster drawing dimensions missing')
+        width, height = info['width'], info['height']
+        max_width, max_height = 240, 180
+        left = 310 + (max_width - width) // 2
+        top = 155 + (max_height - height) // 2
+        compare_paint_canvas(
+            engine.paint, root / 'output' / 'raster-source-color.png',
+            width, height, left, top,
+            output=root / 'output' / 'comparison'
+        )
     if not args.no_publish_result:
         publisher = ResultPublisher(root)
         publisher.capture(engine.paint)
