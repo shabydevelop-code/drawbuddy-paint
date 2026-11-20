@@ -13,12 +13,14 @@ from trace_reference import InkMask
 
 class SolidRegionClassifier:
     def __init__(self, threshold=95, core_radius=5, min_core_area=18,
-                 max_aspect=3.0, min_compactness=0.14):
+                 max_aspect=3.0, min_compactness=0.14,
+                 min_width_variation=1.35):
         self.threshold = threshold
         self.core_radius = core_radius
         self.min_core_area = min_core_area
         self.max_aspect = max_aspect
         self.min_compactness = min_compactness
+        self.min_width_variation = min_width_variation
 
     def classify(self, reference):
         ink = InkMask(self.threshold).from_image(reference).astype(np.uint8)
@@ -40,17 +42,33 @@ class SolidRegionClassifier:
             perimeter = cv2.arcLength(max(contours, key=cv2.contourArea), True)
             compactness = 4*np.pi*area/(perimeter*perimeter) if perimeter else 0
             aspect = max(w,h)/max(1,min(w,h))
-            # A long thick line can contain a broad core. Reject by both
-            # elongation and boundary compactness, not width alone.
-            plausible = aspect <= self.max_aspect and compactness >= self.min_compactness
+            # Measure width variation along local distance-transform ridges.
+            # A constant-width outline is less likely to be a filled region.
+            local_distance = distance[y:y+h, x:x+w]
+            ridge = cv2.dilate(local_distance, np.ones((3, 3), np.uint8))
+            medial = (local_distance >= ridge - 0.01) & (component > 0)
+            widths = 2.0 * local_distance[medial]
+            if widths.size >= 3:
+                q10, q90 = np.percentile(widths, [10, 90])
+                variation = float(q90 / max(q10, 1.0))
+            else:
+                variation = 1.0
+            compact = aspect <= self.max_aspect and compactness >= self.min_compactness
+            variable_solid = (variation >= self.min_width_variation
+                              and aspect <= self.max_aspect * 1.5
+                              and compactness >= self.min_compactness * 0.75)
+            plausible = compact or variable_solid
             target = approved if plausible else rejected
             target[y:y+h, x:x+w][component > 0] = 1
             items.append({"bounds": [x,y,x+w-1,y+h-1],
                           "core_area": area,
                           "aspect_ratio": round(aspect,3),
                           "compactness": round(float(compactness),3),
+                          "medial_width_variation": round(variation, 3),
+                          "classification_reason": ("compact" if compact else
+                                                    "variable_width" if variable_solid else "line_like"),
                           "max_half_width": round(float(distance[y:y+h,x:x+w][component>0].max()),2),
-                          "status": "REVIEW_COMPACT_CORE" if plausible else "REJECT_ELONGATED_CORE"})
+                          "status": "REVIEW_COMPACT_CORE" if plausible else "REJECT_LINE_LIKE_CORE"})
         return ink, approved, rejected, items
 
     def run(self, reference, output, report):
@@ -69,6 +87,7 @@ class SolidRegionClassifier:
         summary = {"reference":str(reference),"core_radius":self.core_radius,
                    "review_candidates":sum(i["status"]=="REVIEW_COMPACT_CORE" for i in items),
                    "rejected":sum(i["status"]=="REJECT_ELONGATED_CORE" for i in items),
+                   "min_width_variation":self.min_width_variation,
                    "regions":items,
                    "warning":"Only compact cores classified. Not full fill masks; no drawing edits."}
         report.write_text(json.dumps(summary,indent=2),encoding="utf-8")
