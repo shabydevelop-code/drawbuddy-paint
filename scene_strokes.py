@@ -63,38 +63,68 @@ def trace_skeleton(mask):
 
 
 def join_touching_paths(paths):
-    """Join paths at identical endpoints only; never invent a bridging segment.
+    """Pair shared endpoints in near-linear time without inventing edges.
 
-    A branch may be traversed more than once, but no new geometric edges
-    are introduced. Deterministic pairing keeps diagnostic runs comparable.
+    Every input path is used exactly once, including loops and isolated
+    points. Branch junctions are paired deterministically; unmatched
+    endpoints remain separate. Only original vertices are retained.
     """
     paths = [list(p) for p in paths]
-    while True:
-        endpoints = defaultdict(list)
-        for i, p in enumerate(paths):
-            if len(p) > 1:
-                endpoints[p[0]].append((i, True))
-                endpoints[p[-1]].append((i, False))
-        pair = None
-        for point in sorted(endpoints):
-            entries = sorted(set(endpoints[point]))
-            distinct = sorted({i for i, _ in entries})
-            if len(distinct) >= 2:
-                i, j = distinct[:2]
-                pair = (i, j, point)
+    endpoints = defaultdict(list)
+    for i, path in enumerate(paths):
+        if len(path) > 1 and path[0] != path[-1]:
+            endpoints[path[0]].append((i, 0))
+            endpoints[path[-1]].append((i, 1))
+
+    mates = {}
+    for point in sorted(endpoints):
+        entries = sorted(endpoints[point])
+        for k in range(0, len(entries) - 1, 2):
+            left, right = entries[k], entries[k + 1]
+            mates[left] = right
+            mates[right] = left
+
+    visited = set()
+    joined = []
+
+    def collect(start_id, start_side):
+        result = []
+        current_id, entry_side = start_id, start_side
+        while current_id not in visited:
+            visited.add(current_id)
+            path = paths[current_id]
+            oriented = path if entry_side == 0 else path[::-1]
+            if result:
+                assert result[-1] == oriented[0]
+                result.extend(oriented[1:])
+            else:
+                result.extend(oriented)
+            exit_side = 1 - entry_side
+            nxt = mates.get((current_id, exit_side))
+            if nxt is None or nxt[0] in visited:
                 break
-        if pair is None:
-            break
-        i, j, point = pair
-        a, b = paths[i], paths[j]
-        if a[0] == point:
-            a = a[::-1]
-        if b[-1] == point:
-            b = b[::-1]
-        assert a[-1] == b[0] == point
-        paths[i] = a + b[1:]
-        paths.pop(j)
-    return paths
+            current_id, entry_side = nxt
+        return result
+
+    # Start open chains at unpaired endpoints, then consume closed chains.
+    for i, path in enumerate(paths):
+        if i in visited or len(path) <= 1 or path[0] == path[-1]:
+            continue
+        if (i, 0) not in mates:
+            joined.append(collect(i, 0))
+        elif (i, 1) not in mates:
+            joined.append(collect(i, 1))
+    for i, path in enumerate(paths):
+        if i not in visited:
+            if len(path) <= 1 or path[0] == path[-1]:
+                visited.add(i)
+                joined.append(path)
+            else:
+                joined.append(collect(i, 0))
+    assert len(visited) == len(paths)
+    assert sum(max(0, len(p) - 1) for p in joined) == (
+        sum(max(0, len(p) - 1) for p in paths))
+    return joined
 
 
 def reconstruct(paths, distance, ink, conservative=False):
