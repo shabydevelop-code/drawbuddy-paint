@@ -248,6 +248,15 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     print('Use a NEW blank white maximized Paint canvas. F8 stops drawing.')
     engine.tools.select('pencil')
     engine.colors.select_primary('black')
+    # Paint sometimes does not fully activate Pencil on its first ribbon
+    # selection. Set the initial size, then physically click Pencil again
+    # before any mouseDown on the canvas. Do this only once per drawing.
+    import time
+    engine.stroke_size.select(plan[0][0])
+    engine.tools.pencil.click()
+    engine.tools.current = 'pencil'
+    time.sleep(0.6)
+    print('Paint Pencil reselected after color/size initialization.')
     # The validated plan is already grouped by size and travel-optimized.
     try:
         for index, (size, points) in enumerate(plan, 1):
