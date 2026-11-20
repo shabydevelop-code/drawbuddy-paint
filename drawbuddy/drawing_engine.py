@@ -239,7 +239,7 @@ class DrawingEngine:
                     print(f'\n{index}/{len(steps)} {name}: {tool}, outline={step["color"]}')
                     self.tools.select('pencil')
                     self.colors.select_primary(step['color'])
-                    if tool == 'closed_path':
+                    if tool == 'closed_path' and not step.get('skip_color_probe', False):
                         self.verify_pencil_color(step['color'])
                     points = list(step['points'])
                     if tool == 'closed_path' and points[-1] != points[0]:
