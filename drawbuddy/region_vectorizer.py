@@ -58,32 +58,97 @@ def analyze_regions(source, max_width=240, max_height=180):
                             'boundaries': boundaries})
             next_id += 1
 
-    # Shared boundaries are pixel adjacencies; each interface is recorded
-    # once, irrespective of which two regions own it.
-    adjacency = {}
-    for dy, dx in ((0, 1), (1, 0)):
-        a = label_map[:h-dy, :w-dx]
-        b = label_map[dy:, dx:]
-        ys, xs = np.where((a != b) & (a > 0) & (b > 0))
-        for y, x in zip(ys, xs):
-            pair = tuple(sorted((int(a[y, x]), int(b[y, x]))))
-            adjacency[pair] = adjacency.get(pair, 0) + 1
-    shared = [{'regions': list(pair), 'contact_pixels': n}
-              for pair, n in sorted(adjacency.items())]
+    # Build a single shared edge network on the pixel-cell lattice.
+    # Each interface between two cells is recorded once, regardless of
+    # which region owns it. The outside boundary is against region 0.
+    edges = {}
+    def add_edge(a, b, first, second):
+        if a == b:
+            return
+        pair = tuple(sorted((int(a), int(b))))
+        edges.setdefault(pair, set()).add((first, second))
 
-    # Preview: region boundaries and source ink, without painting over regions.
-    preview = np.full((h, w, 3), 255, np.uint8)
-    palette = {'cream': (170, 200, 220), 'orange': (0, 130, 255),
-               'brown': (70, 100, 160), 'black': (0, 0, 0)}
-    for region in sorted(regions, key=lambda r: -r['area']):
-        for boundary in region['boundaries']:
-            contour = np.asarray(boundary, np.int32).reshape(-1, 1, 2)
-            cv2.polylines(preview, [contour], True, palette[region['color']], 1)
-    preview[black] = (0, 0, 0)
+    for y in range(h):
+        for x in range(w):
+            region = int(label_map[y, x])
+            if x == 0:
+                add_edge(region, 0, (x, y), (x, y + 1))
+            if y == 0:
+                add_edge(region, 0, (x, y), (x + 1, y))
+            right = int(label_map[y, x + 1]) if x + 1 < w else 0
+            below = int(label_map[y + 1, x]) if y + 1 < h else 0
+            add_edge(region, right, (x + 1, y), (x + 1, y + 1))
+            add_edge(region, below, (x, y + 1), (x + 1, y + 1))
+
+    # Turn shared edges into continuous polylines. Every edge is consumed
+    # exactly once; junctions end a path instead of inventing connections.
+    def trace_edges(edge_set):
+        adjacency = {}
+        for a, b in edge_set:
+            adjacency.setdefault(a, set()).add(b)
+            adjacency.setdefault(b, set()).add(a)
+        unused = set(edge_set)
+        paths = []
+        def consume(a, b):
+            key = (a, b) if a < b else (b, a)
+            if key not in unused:
+                return False
+            unused.remove(key)
+            return True
+        while unused:
+            endpoints = sorted(v for v, n in adjacency.items()
+                               if len(n) != 2 and any(
+                                   ((v, q) if v < q else (q, v)) in unused
+                                   for q in n))
+            start = endpoints[0] if endpoints else min(min(e) for e in unused)
+            options = sorted(q for q in adjacency[start]
+                             if ((start, q) if start < q else (q, start)) in unused)
+            if not options:
+                raise RuntimeError('Shared boundary graph contains an orphan edge')
+            nxt = options[0]
+            consume(start, nxt)
+            path = [start, nxt]
+            while True:
+                here = path[-1]
+                if len(adjacency[here]) != 2:
+                    break
+                options = sorted(q for q in adjacency[here]
+                                 if ((here, q) if here < q else (q, here)) in unused)
+                if not options:
+                    break
+                q = options[0]
+                consume(here, q)
+                path.append(q)
+                if q == start:
+                    break
+            paths.append([list(point) for point in path])
+        return paths
+
+    shared = []
+    for pair, edge_set in sorted(edges.items()):
+        paths = trace_edges(edge_set)
+        shared.append({'regions': list(pair), 'edge_count': len(edge_set),
+                       'paths': paths})
+    if sum(len(p['paths']) for p in shared) == 0:
+        raise ValueError('No shared boundary paths detected')
+
+    # Render each shared interface once. Exterior edges first, interior
+    # edges second, source black ink last. This preview is NOT a fill plan.
+    preview = np.full((h + 1, w + 1, 3), 255, np.uint8)
+    for item in sorted(shared, key=lambda e: (0 not in e['regions'], e['regions'])):
+        for path in item['paths']:
+            if len(path) >= 2:
+                cv2.polylines(preview, [np.asarray(path, np.int32)], False,
+                              (0, 110, 210) if 0 in item['regions'] else
+                              (110, 110, 110), 1, lineType=cv2.LINE_8)
+    preview[:h, :w][black] = (0, 0, 0)
     out = Path('output')
     out.mkdir(parents=True, exist_ok=True)
     preview_file = out / 'region-boundaries-preview.png'
     data_file = out / 'region-map.json'
+    network_file = out / 'region-shared-boundaries-preview.png'
+    if not cv2.imwrite(str(network_file), preview):
+        raise OSError(f'Failed to write {network_file}')
     if not cv2.imwrite(str(preview_file), preview):
         raise OSError(f'Failed to write {preview_file}')
     data = {'source': str(source), 'width': w, 'height': h,
@@ -92,5 +157,6 @@ def analyze_regions(source, max_width=240, max_height=180):
     data_file.write_text(json.dumps(data, ensure_ascii=False, indent=2),
                          encoding='utf-8')
     return {'regions': len(regions), 'shared_boundaries': len(shared),
-            'preview': str(preview_file), 'map': str(data_file),
+            'preview': str(preview_file), 'network_preview': str(network_file),
+            'map': str(data_file),
             'paint_ready': False}
