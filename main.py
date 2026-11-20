@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 from drawbuddy.drawing_engine import DrawingEngine
+from drawbuddy.controller import DrawingCancelled
 from drawbuddy.freehand_painter import build_freehand_drawing
 from drawbuddy.lineart_painter import build_lineart_drawing
 from drawbuddy.continuous_painter import build_continuous_color_drawing
@@ -87,7 +88,12 @@ def main():
     if type(speed) not in (float, int) or not math.isfinite(speed) or speed <= 0 or speed > 100:
         parser.error('drawing speed must be greater than 0 and at most 100')
     engine = DrawingEngine(speed=float(speed))
-    engine.execute(drawing, root / 'paint-diagnostic.png')
+    print('Press ESC at any time to stop drawing safely.')
+    try:
+        engine.execute(drawing, root / 'paint-diagnostic.png')
+    except DrawingCancelled:
+        print('STOPPED: drawing cancelled by Esc. Partial drawing remains in Paint.')
+        return
     engine.paint.refresh_display()
     if args.binary_source and not args.no_compare:
         # Compare the actual pixels against the resized source, not the
