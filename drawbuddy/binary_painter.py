@@ -120,7 +120,7 @@ def build_region_drawing(source, max_width=500, max_height=350, threshold=None):
 
 
 def build_outline_drawing(source, max_width=500, max_height=350, threshold=None):
-    """Draw the exterior 0/1 contour and one largest enclosed contour."""
+    """Draw only the exterior 0/1 contour, without filling or gap closing."""
     source = Path(source)
     gray = cv2.imread(str(source), cv2.IMREAD_GRAYSCALE)
     if gray is None:
@@ -135,18 +135,13 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
         if not 0 <= threshold <= 255:
             raise ValueError("threshold must be 0..255")
         ink = np.where(gray < threshold, 255, 0).astype(np.uint8)
-    # Use the original thresholded 0/1 mask without gap closing.
-    # Keep the contour hierarchy to locate one enclosed boundary.
-    contours, hierarchy = cv2.findContours(ink, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    # Draw only the largest external contour of the unmodified 0/1 mask.
+    contours, _ = cv2.findContours(ink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
         raise ValueError("No exterior contour found in binary image")
-    exterior_indices = [i for i, h in enumerate(hierarchy[0]) if h[3] == -1]
-    outer_index = max(exterior_indices, key=lambda i: cv2.contourArea(contours[i]))
-    contour = contours[outer_index]
+    contour = max(contours, key=cv2.contourArea)
     if cv2.contourArea(contour) < 20:
         raise ValueError("Exterior contour is too small")
-    # A very small approximation removes pixel stair-steps but preserves
-    # the actual silhouette rather than inventing a smooth shape.
     contour = cv2.approxPolyDP(contour, epsilon=0.55, closed=True)
     left = 310 + (max_width - size[0]) // 2
     top = 155 + (max_height - size[1]) // 2
@@ -154,22 +149,9 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
     if len(points) < 3:
         raise ValueError("Exterior contour has fewer than three points")
     points.append(points[0])
-    steps = [{"name": "outer silhouette", "tool": "stroke",
-              "color": "black", "width": 1, "points": points}]
-    # Select only a direct child of the chosen outer contour. This keeps
-    # disconnected components and deeper-level details out of this test.
-    inner_indices = [i for i, h in enumerate(hierarchy[0])
-                     if int(h[3]) == outer_index and cv2.contourArea(contours[i]) >= 20]
-    if inner_indices:
-        inner = contours[max(inner_indices, key=lambda i: cv2.contourArea(contours[i]))]
-        inner = cv2.approxPolyDP(inner, epsilon=0.55, closed=True)
-        inner_points = [[left + int(p[0][0]), top + int(p[0][1])] for p in inner]
-        if len(inner_points) >= 3:
-            inner_points.append(inner_points[0])
-            steps.append({"name": "largest inner boundary", "tool": "stroke",
-                          "color": "black", "width": 1, "points": inner_points})
-    return {"name": f"{source.stem}-outer-and-one-inner",
-            "mode": "binary-outer-and-one-inner",
+    return {"name": f"{source.stem}-outer-silhouette",
+            "mode": "binary-outer-silhouette-only",
             "binary": {"zero": "white", "one": "black", "width": size[0],
-                       "height": size[1], "outlines": len(steps), "fill_enabled": False},
-            "steps": steps}
+                       "height": size[1], "outlines": 1, "fill_enabled": False},
+            "steps": [{"name": "outer silhouette only", "tool": "stroke",
+                       "color": "black", "width": 1, "points": points}]}
