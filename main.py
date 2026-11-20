@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 from drawbuddy.drawing_engine import DrawingEngine
 from drawbuddy.result_publisher import ResultPublisher
-from drawbuddy.binary_painter import build_binary_drawing, build_region_drawing, build_outline_drawing
+from drawbuddy.binary_painter import build_binary_drawing, build_region_drawing, build_outline_drawing, build_color_raster_drawing
 
 
 def main():
@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--binary-fill', action='store_true', help='Experimental contour and bucket fill mode (unsafe until validated)')
     parser.add_argument('--binary-runs', action='store_true', help='Explicitly select the default 0/1 row-by-row printing')
     parser.add_argument('--binary-outlines', action='store_true', help='Use the previous experimental contour drawing')
+    parser.add_argument('--color-raster', action='store_true', help='Print RGB colors as separate 0/1 raster runs')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
@@ -26,9 +27,10 @@ def main():
             parser.error('Specify either a drawing name or --binary-source, not both')
         if args.binary_threshold is not None and not 0 <= args.binary_threshold <= 255:
             parser.error('--binary-threshold must be 0..255')
-        if sum((args.binary_runs, args.binary_fill, args.binary_outlines)) > 1:
-            parser.error('Choose only one of --binary-runs, --binary-fill, --binary-outlines')
-        planner = (build_region_drawing if args.binary_fill else
+        if sum((args.binary_runs, args.binary_fill, args.binary_outlines, args.color_raster)) > 1:
+            parser.error('Choose only one raster/outline mode')
+        planner = (build_color_raster_drawing if args.color_raster else
+                   build_region_drawing if args.binary_fill else
                    build_outline_drawing if args.binary_outlines else build_binary_drawing)
         drawing = planner(args.binary_source, threshold=args.binary_threshold)
         print(f'Binary 0/1: {drawing["binary"]}')
