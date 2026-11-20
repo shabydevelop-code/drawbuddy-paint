@@ -25,6 +25,7 @@ def extract_scene(source, colors=24):
     label_image = labels.reshape(height, width)
     palette = np.clip(np.rint(palette), 0, 255).astype(np.uint8)
     shapes = []
+    shape_masks = []
     for color_index in range(colors):
         mask = np.uint8(label_image == color_index) * 255
         contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP,
@@ -42,7 +43,15 @@ def extract_scene(source, colors=24):
             while child != -1:
                 rings.append(contours[child][:, 0, :].tolist())
                 child = int(hierarchy[0, child, 0])
-            shapes.append({'color': palette[color_index].tolist(),
+            component_mask = np.zeros((height, width), dtype=np.uint8)
+            cv2.drawContours(component_mask, contours, i, 255, -1)
+            child_mask = int(hierarchy[0, i, 2])
+            while child_mask != -1:
+                cv2.drawContours(component_mask, contours, child_mask, 0, -1)
+                child_mask = int(hierarchy[0, child_mask, 0])
+            shape_masks.append(component_mask)
+            shapes.append({'palette_index': color_index,
+                           'color': palette[color_index].tolist(),
                            'rings': rings,
                            'area': float(cv2.contourArea(contour))})
     # Keep a lossless pixel ownership layer for precise validation and
@@ -59,6 +68,56 @@ def render_scene(scene):
     if labels.shape != (h, w) or labels.min() < 0 or labels.max() >= len(palette):
         raise ValueError('Scene label map is invalid')
     return cv2.cvtColor(palette[labels], cv2.COLOR_RGB2BGR)
+
+
+def validate_vector_geometry(scene):
+    """Rasterize actual shape rings and compare to exact color ownership.
+
+    Reports vector coverage separately from palette fidelity. No inference
+    from a pixel-label render is counted as vector success.
+    """
+    labels = np.asarray(scene['labels'], dtype=np.int32)
+    h, w = labels.shape
+    vector_masks = [np.zeros((h, w), np.uint8)
+                    for _ in scene['palette']]
+    for shape in scene['shapes']:
+        rings = shape['rings']
+        if not rings:
+            continue
+        mask = np.zeros((h, w), np.uint8)
+        outer = np.asarray(rings[0], np.int32)
+        if len(outer) < 3:
+            continue
+        cv2.fillPoly(mask, [outer], 255)
+        for hole in rings[1:]:
+            hole = np.asarray(hole, np.int32)
+            if len(hole) >= 3:
+                cv2.fillPoly(mask, [hole], 0)
+        vector_masks[shape['palette_index']] |= mask
+    # Count ambiguous overlaps as failures rather than hiding them via
+    # an arbitrary draw order.
+    votes = np.stack([(m != 0) for m in vector_masks], axis=0)
+    coverage = votes.sum(axis=0)
+    predicted = votes.argmax(axis=0)
+    correct = (coverage == 1) & (predicted == labels)
+    accuracy = float(correct.mean())
+    missing = int(np.count_nonzero(coverage == 0))
+    overlaps = int(np.count_nonzero(coverage > 1))
+    per_color = []
+    for index in range(len(vector_masks)):
+        actual = labels == index
+        proposed = votes[index]
+        union = np.count_nonzero(actual | proposed)
+        intersection = np.count_nonzero(actual & proposed)
+        per_color.append({'index': index,
+                          'iou': round(intersection / union, 5) if union else 1.0})
+    diagnostic = np.full((h, w, 3), 255, np.uint8)
+    diagnostic[(coverage == 1) & ~correct] = (0, 165, 255)
+    diagnostic[coverage == 0] = (0, 0, 255)
+    diagnostic[coverage > 1] = (255, 0, 255)
+    return {'exact_pixel_coverage': round(accuracy, 6),
+            'uncovered_pixels': missing, 'overlap_pixels': overlaps,
+            'per_color': per_color}, diagnostic
 
 
 def svg_scene(scene, output):
@@ -95,6 +154,8 @@ def main():
     delta = cv2.absdiff(source, render)
     cv2.imwrite(str(output / 'difference.png'), delta)
     svg_scene(scene, output / 'scene.svg')
+    vector_metrics, vector_difference = validate_vector_geometry(scene)
+    cv2.imwrite(str(output / 'vector-difference.png'), vector_difference)
     # Avoid enormous JSON arrays: save the exact pixel labels separately.
     labels = np.asarray(scene.pop('labels'), np.uint8)
     np.savez_compressed(output / 'ownership.npz', labels=labels,
@@ -104,8 +165,9 @@ def main():
               'colors': args.colors, 'shapes': len(scene['shapes']),
               'mean_absolute_error': round(float(delta.mean()), 3),
               'max_channel_error': int(delta.max()),
+              'vector_geometry': vector_metrics,
               'paint_ready': False,
-              'note': 'Raster fidelity is measured; SVG geometry and Paint execution are not yet validated.'}
+              'note': 'Raster color fidelity and contour geometry are measured independently; Paint execution is not yet validated.'}
     (output / 'validation.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps(report, indent=2))
     print('Files:', output)
