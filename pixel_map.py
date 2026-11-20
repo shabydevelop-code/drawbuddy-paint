@@ -67,7 +67,58 @@ def export_paint_palette_preview(rgb, output, grid_scale):
     print(f'  Report: {base.with_suffix(".json")}')
 
 
-def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_palette_16=False):
+
+def export_seven_color_preview(rgb, output, grid_scale):
+    """Find seven representative colors in the resized source, without guessing."""
+    pixels = rgb.reshape(-1, 3).astype(np.float32)
+    cv2.setRNGSeed(42)
+    _, labels, centers = cv2.kmeans(
+        pixels, 7, None,
+        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 60, 0.1),
+        8, cv2.KMEANS_PP_CENTERS)
+    centers = np.clip(np.rint(centers), 0, 255).astype(np.uint8)
+    ids = labels.reshape(-1)
+    counts = np.bincount(ids, minlength=7)
+    order = np.argsort(-counts)
+    centers = centers[order]
+    remap = np.empty(7, dtype=np.uint8)
+    remap[order] = np.arange(7, dtype=np.uint8)
+    ids = remap[ids]
+    mapped = centers[ids].reshape(rgb.shape)
+    base = output.with_name(output.stem + '-palette7')
+    cv2.imwrite(str(base.with_suffix('.png')), cv2.cvtColor(mapped, cv2.COLOR_RGB2BGR))
+    if grid_scale > 1:
+        zoom = cv2.resize(mapped, (rgb.shape[1] * grid_scale,
+                                  rgb.shape[0] * grid_scale),
+                          interpolation=cv2.INTER_NEAREST)
+        zoom[::grid_scale, :, :] = 195
+        zoom[:, ::grid_scale, :] = 195
+        cv2.imwrite(str(base.with_name(base.name + '-grid.png')),
+                    cv2.cvtColor(zoom, cv2.COLOR_RGB2BGR))
+    entries = [
+        {'rgb': '#%02X%02X%02X' % tuple(int(c) for c in color),
+         'pixels': int(np.count_nonzero(ids == index))}
+        for index, color in enumerate(centers)
+    ]
+    report = {
+        'method': 'opencv-kmeans-rgb-7-on-resized-image',
+        'width': int(rgb.shape[1]), 'height': int(rgb.shape[0]),
+        'mean_absolute_rgb_error': round(float(np.mean(
+            np.abs(rgb.astype(np.float32) - mapped.astype(np.float32)))), 3),
+        'colors': entries,
+        'pixels': ids.reshape(rgb.shape[:2]).tolist(),
+    }
+    base.with_suffix('.json').write_text(
+        json.dumps(report, separators=(',', ':')), encoding='utf-8')
+    print('SEVEN-COLOR palette (computed, not manually identified):')
+    for entry in entries:
+        print(f"  {entry['rgb']}: {entry['pixels']:,} pixels")
+    print(f"  Mean absolute RGB error: {report['mean_absolute_rgb_error']}")
+    print(f'  Preview: {base.with_suffix(".png")}')
+    print(f'  Indexed pixel map: {base.with_suffix(".json")}')
+
+
+def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_palette_16=False, palette_7=False):
     if width < 1 or height < 1 or grid_scale < 1:
         raise ValueError('Dimensions and grid scale must be positive')
     source = Path(source)
@@ -92,6 +143,8 @@ def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_p
     x0, y0 = (width - dest_w) // 2, (height - dest_h) // 2
     canvas[y0:y0 + dest_h, x0:x0 + dest_w] = resized
     rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+    if palette_7:
+        export_seven_color_preview(rgb, output, grid_scale)
     if paint_palette_16:
         export_paint_palette_preview(rgb, output, grid_scale)
     # Each entry is an explicit 6-digit RGB value. White is #FFFFFF.
@@ -135,9 +188,11 @@ def main():
     parser.add_argument('--grid-scale', type=int, default=4)
     parser.add_argument('--paint-palette-16', action='store_true',
                         help='Export comparison using 16 fixed Paint-style colors')
+    parser.add_argument('--palette-7', action='store_true',
+                        help='Generate an image and indexed pixel map with 7 computed colors')
     args = parser.parse_args()
     build_pixel_map(args.source, args.output, args.width, args.height,
-                    args.grid_scale, args.paint_palette_16)
+                    args.grid_scale, args.paint_palette_16, args.palette_7)
 
 
 if __name__ == '__main__':
