@@ -57,6 +57,23 @@ class PaintTools:
         self.pencil = PaintComponent(controller, 'pencil')
 
 
+class PaintStrokeSize:
+    """Paint ribbon Size selector; UI coordinates belong to the element registry."""
+
+    def __init__(self, controller):
+        self.menu = PaintComponent(controller, 'size_menu')
+        self.options = {n: PaintComponent(controller, f'size_{n}') for n in (1, 2, 3, 4)}
+        self.current = None
+
+    def select(self, level):
+        if level not in self.options:
+            raise ValueError('Paint stroke size must be 1, 2, 3 or 4')
+        if level != self.current:
+            self.menu.click()
+            self.options[level].click()
+            self.current = level
+
+
 class PaintCanvas:
     def __init__(self, controller):
         self.controller = controller
