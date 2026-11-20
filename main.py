@@ -13,9 +13,10 @@ def main():
     parser.add_argument('drawing', nargs='?', help='Drawing name (e.g. dog), without .json')
     parser.add_argument('--speed', type=float, default=None, help='Stroke speed multiplier (e.g. 4, 20, 50, 100)')
     parser.add_argument('--no-publish-result', action='store_true', help='Skip automatic Paint canvas capture and GitHub upload')
-    parser.add_argument('--binary-source', type=Path, help='Draw source pixels using a binary 0/1 mask instead of vector tracing')
+    parser.add_argument('--binary-source', type=Path, help='Print the source as 0/1 horizontal pixel runs (default)')
     parser.add_argument('--binary-fill', action='store_true', help='Experimental contour and bucket fill mode (unsafe until validated)')
-    parser.add_argument('--binary-runs', action='store_true', help='Use legacy row-by-row binary printing')
+    parser.add_argument('--binary-runs', action='store_true', help='Explicitly select the default 0/1 row-by-row printing')
+    parser.add_argument('--binary-outlines', action='store_true', help='Use the previous experimental contour drawing')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
@@ -25,10 +26,10 @@ def main():
             parser.error('Specify either a drawing name or --binary-source, not both')
         if args.binary_threshold is not None and not 0 <= args.binary_threshold <= 255:
             parser.error('--binary-threshold must be 0..255')
-        if args.binary_runs and args.binary_fill:
-            parser.error('--binary-runs and --binary-fill cannot be combined')
-        planner = (build_binary_drawing if args.binary_runs else
-                   build_region_drawing if args.binary_fill else build_outline_drawing)
+        if sum((args.binary_runs, args.binary_fill, args.binary_outlines)) > 1:
+            parser.error('Choose only one of --binary-runs, --binary-fill, --binary-outlines')
+        planner = (build_region_drawing if args.binary_fill else
+                   build_outline_drawing if args.binary_outlines else build_binary_drawing)
         drawing = planner(args.binary_source, threshold=args.binary_threshold)
         print(f'Binary 0/1: {drawing["binary"]}')
     else:
