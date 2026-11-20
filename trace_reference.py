@@ -329,17 +329,15 @@ class PaintLeakAuditor:
 
 
 class ConservativeWidthMapper:
-    """Use only Paint sizes 1 and 2 to avoid the heavy pixelated v3 outline."""
+    """Keep a consistent thin Pencil line unless variation is explicitly requested.
+
+    The reference's ink diameter is not a reliable proxy for the apparent
+    width of Paint's Pencil tool. Defaulting to a single size avoids frequent
+    ribbon interactions and keeps the contours visually consistent.
+    """
 
     def assign(self, paths, mask):
-        analyzer = StrokeWidthAnalyzer(mask)
-        measured = np.asarray([analyzer.measure(path) for path in paths])
-        if len(measured) < 2 or float(np.ptp(measured)) < 0.7:
-            return [1] * len(paths)
-        cutoff = float(np.percentile(measured, 70))
-        return [2 if d > cutoff else 1 for d in measured]
-
-
+        return [1] * len(paths)
 
 
 class ReferenceTracingPipeline:
