@@ -113,6 +113,41 @@ class DrawingEngine:
                     result.append(point)
         return result
 
+    def verify_fill_boundary(self, step):
+        """Check the mapped contour is raster-closed and seed is safely interior.
+
+        A 1px Paint pencil line can leak diagonally; check connectivity on
+        a rasterized contour before clicking the bucket.
+        """
+        try:
+            import cv2
+            import numpy as np
+        except ImportError as exc:
+            raise RuntimeError("Fill boundary validation requires opencv-python and numpy") from exc
+        points = step["points"]
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        x0, y0 = min(xs)-3, min(ys)-3
+        width, height = max(xs)-x0+4, max(ys)-y0+4
+        if width < 8 or height < 8:
+            raise RuntimeError(f'{step["name"]}: mapped fill contour is too small')
+        mask = np.zeros((height, width), dtype=np.uint8)
+        contour = np.array([[x-x0, y-y0] for x, y in points], dtype=np.int32)
+        cv2.polylines(mask, [contour], True, 255, 1, lineType=cv2.LINE_8)
+        seed = (step["fill_point"][0]-x0, step["fill_point"][1]-y0)
+        if not (1 <= seed[0] < width-1 and 1 <= seed[1] < height-1):
+            raise RuntimeError(f'{step["name"]}: fill seed outside mapped contour')
+        if mask[seed[1], seed[0]]:
+            raise RuntimeError(f'{step["name"]}: fill seed falls on outline')
+        free = (mask == 0).astype(np.uint8)
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(free, 4)
+        region = labels[seed[1], seed[0]]
+        if region == 0 or region == labels[0, 0]:
+            raise RuntimeError(f'{step["name"]}: fill seed leaks to exterior')
+        if stats[region, cv2.CC_STAT_AREA] < 12:
+            raise RuntimeError(f'{step["name"]}: fill interior too small')
+        return True
+
     def execute(self, drawing, diagnostic_path):
         steps = drawing['steps']
         print(f'DrawBuddy: {drawing.get("name", "drawing")} ({len(steps)} steps).')
@@ -121,6 +156,8 @@ class DrawingEngine:
             for index, step in enumerate(steps, 1):
                 name, tool = step['name'], step['tool']
                 if tool in ('stroke', 'closed_path'):
+                    if tool == 'closed_path':
+                        self.verify_fill_boundary(step)
                     print(f'\n{index}/{len(steps)} {name}: {tool}, outline={step["color"]}')
                     self.tools.select('pencil')
                     self.colors.select_primary(step['color'])
@@ -151,7 +188,10 @@ class DrawingEngine:
                             self.canvas.fill(x, y)
                             actual = self.canvas.sample(x, y)
                         if not self.color_matches(actual, RGB[step['fill']]):
-                            raise RuntimeError(f'{name}: fill failed, got {actual}, expected {RGB[step["fill"]]}')
+                            raise RuntimeError(
+                                f'{name}: fill failed, got {actual}, expected {RGB[step["fill"]]}; '
+                                'Paint may have selected the wrong swatch or the boundary leaked. '
+                                'Stopped before further drawing.')
                         # Check an exterior pixel is still white to detect bucket leakage.
                         if 'outside_point' in step:
                             ox, oy = step['outside_point']
