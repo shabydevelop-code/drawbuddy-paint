@@ -35,12 +35,15 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False):
     dest_w, dest_h = max(1, round(width * scale)), max(1, round(height * scale))
     left = 310 + (240 - dest_w) // 2
     top = 155 + (180 - dest_h) // 2
-    # Keep the original pen trajectories. Remove duplicate *edges* after
-    # mapping to Paint resolution; never replace paths with scanline printing.
+    # Preserve whole pen gestures. Never fragment them into per-pixel
+    # fragments: that produces the printer-like motion seen in Paint.
     selected_paths = paths[:limit]
     visited_pixels = set()
     plan = []
     duplicate_pixels = 0
+    rejected_short = 0
+    rejected_overlap = 0
+    min_stroke_pixels = 8
 
     def pixels_between(a, b):
         x0, y0 = a
@@ -60,12 +63,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False):
                 err += dx
                 y0 += sy
 
-    def flush(chain):
-        if chain:
-            # A single pixel is drawn with a zero-length mouse drag.
-            coords = chain if len(chain) > 1 else [chain[0], chain[0]]
-            plan.append((1, [list(p) for p in coords]))
-
+    candidates = []
     for record in selected_paths:
         mapped = []
         for point in record.get('points', []):
@@ -78,25 +76,34 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False):
             dest = (left + round(x * scale), top + round(y * scale))
             if not mapped or mapped[-1] != dest:
                 mapped.append(dest)
-        if not mapped:
+        if len(mapped) < 2:
+            rejected_short += 1
             continue
-        chain = []
-        previous = None
-        for target in mapped:
-            # The initial pixel of a subsequent segment belongs to the
-            # current chain; skip it to avoid falsely splitting the stroke.
-            raster = ([target] if previous is None
-                      else list(pixels_between(previous, target))[1:])
-            previous = target
-            for pixel in raster:
-                if pixel in visited_pixels:
-                    duplicate_pixels += 1
-                    flush(chain)
-                    chain = []
-                    continue
-                visited_pixels.add(pixel)
-                chain.append(pixel)
-        flush(chain)
+        pixels = []
+        for i, (start, end) in enumerate(zip(mapped, mapped[1:])):
+            segment = list(pixels_between(start, end))
+            pixels.extend(segment if i == 0 else segment[1:])
+        # Require an actual long gesture, not a short raster fragment.
+        if len(set(pixels)) < min_stroke_pixels:
+            rejected_short += 1
+            continue
+        # Reject self-overlapping gestures; don't turn loops into printing.
+        if len(set(pixels)) != len(pixels):
+            rejected_overlap += 1
+            continue
+        candidates.append((mapped, pixels))
+
+    # Draw long, uninterrupted contours first. Reject any later gesture
+    # which would revisit a previously drawn pixel, rather than cutting it
+    # into many short pen strokes.
+    candidates.sort(key=lambda item: len(item[1]), reverse=True)
+    for mapped, pixels in candidates:
+        if any(p in visited_pixels for p in pixels):
+            rejected_overlap += 1
+            duplicate_pixels += sum(p in visited_pixels for p in pixels)
+            continue
+        visited_pixels.update(pixels)
+        plan.append((1, [list(p) for p in mapped]))
     if not plan:
         raise ValueError('No drawable paths after mapping')
     # Validate the exact planned pen motion before accessing Paint.
@@ -123,8 +130,13 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False):
             if pixel in planned_pixels:
                 overlap_count += 1
             planned_pixels.add(pixel)
+    lengths = [len(points) for _, points in plan]
     report = {'source_paths': len(selected_paths),
               'planned_strokes': len(plan),
+              'rejected_short_paths': rejected_short,
+              'rejected_overlapping_paths': rejected_overlap,
+              'minimum_stroke_pixels': min_stroke_pixels,
+              'median_stroke_vertices': sorted(lengths)[len(lengths)//2],
               'unique_pixels': len(planned_pixels),
               'repeated_pixel_visits': overlap_count,
               'skipped_source_pixel_visits': duplicate_pixels,
@@ -140,10 +152,11 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False):
     # Validate every planned position before touching the Paint canvas.
     for _, points in plan:
         engine.paint.validate_canvas_points(points)
-    print(f'Natural Paint paths: removed {duplicate_pixels} revisited Paint pixels.')
+    print(f'Natural Paint paths: skipped {rejected_short} short and {rejected_overlap} overlapping paths.')
     print(f'Scene Engine Paint test: {len(plan)} deduplicated pen paths '
           f'from {len(selected_paths)} source paths; '
           f'canvas={dest_w}x{dest_h}, scale={scale:.4f}')
+    print('This contour-only experiment intentionally omits short/overlapping detail.')
     print('Use a NEW blank white maximized Paint canvas. F8 stops drawing.')
     engine.tools.select('pencil')
     engine.colors.select_primary('black')
