@@ -135,31 +135,88 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
         if not 0 <= threshold <= 255:
             raise ValueError("threshold must be 0..255")
         ink = np.where(gray < threshold, 255, 0).astype(np.uint8)
-    contours, hierarchy = cv2.findContours(ink, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    # Trace connected black pixels as pen strokes, rather than following
+    # region boundaries or scanning horizontal raster rows.
+    # Skeletonization gives the centerline of each black stroke.
+    skeleton = np.zeros_like(ink)
+    remaining = ink.copy()
+    kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+    while cv2.countNonZero(remaining):
+        eroded = cv2.erode(remaining, kernel)
+        opened = cv2.dilate(eroded, kernel)
+        skeleton = cv2.bitwise_or(skeleton, cv2.subtract(remaining, opened))
+        remaining = eroded
+
+    pixels = set(zip(*np.where(skeleton > 0)))  # (row, column)
+    if not pixels:
+        raise ValueError("No binary pen strokes found")
+    # Use 8-neighborhood connections, but suppress diagonal corner shortcuts
+    # when both orthogonal neighbors exist.
+    def neighbors(p):
+        y, x = p
+        found = []
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if not (dy or dx) or (y + dy, x + dx) not in pixels:
+                    continue
+                if dy and dx and ((y + dy, x) in pixels or (y, x + dx) in pixels):
+                    continue
+                found.append((y + dy, x + dx))
+        return sorted(found)
+    adjacency = {p: neighbors(p) for p in pixels}
+    used = set()
+    paths = []
+    def edge(a, b):
+        return (a, b) if a < b else (b, a)
+    def walk(start, nxt):
+        path = [start, nxt]
+        used.add(edge(start, nxt))
+        previous, current = start, nxt
+        while len(adjacency[current]) == 2:
+            candidates = [p for p in adjacency[current] if p != previous]
+            if not candidates:
+                break
+            following = candidates[0]
+            e = edge(current, following)
+            if e in used:
+                break
+            used.add(e)
+            path.append(following)
+            previous, current = current, following
+        return path
+    # Endpoints and junctions split a stroke into continuous mouse paths.
+    for p in sorted(pixels):
+        if len(adjacency[p]) != 2:
+            for q in adjacency[p]:
+                if edge(p, q) not in used:
+                    paths.append(walk(p, q))
+    # Remaining edges are closed loops without endpoints.
+    for p in sorted(pixels):
+        for q in adjacency[p]:
+            if edge(p, q) not in used:
+                paths.append(walk(p, q))
     left = 310 + (max_width - size[0]) // 2
     top = 155 + (max_height - size[1]) // 2
     steps = []
-    # Clean staircase noise without merging separate contours or changing
-    # the binary topology. Keep tiny facial details if they enclose area.
-    for contour in contours:
-        perimeter = cv2.arcLength(contour, True)
-        if len(contour) < 3 or perimeter < 6:
+    for path in paths:
+        if len(path) < 2:
             continue
-        simplified = cv2.approxPolyDP(contour, epsilon=0.65, closed=True)
-        if len(simplified) < 3:
-            simplified = contour
-        points = [[left + int(p[0][0]), top + int(p[0][1])] for p in simplified]
-        # Remove consecutive identical points and close exactly once.
-        points = [p for i, p in enumerate(points) if i == 0 or p != points[i-1]]
-        if len(points) < 3:
-            continue
-        if points[-1] != points[0]:
-            points.append(points[0])
-        steps.append({"name": f"outline {len(steps)+1}", "tool": "stroke",
-                      "color": "black", "width": 1, "points": points})
+        points = [[left + x, top + y] for y, x in path]
+        # Remove only collinear intermediate pixels; preserve corners.
+        reduced = [points[0]]
+        for i in range(1, len(points)-1):
+            ax, ay = reduced[-1]
+            bx, by = points[i]
+            cx, cy = points[i+1]
+            if (bx-ax)*(cy-by) == (by-ay)*(cx-bx):
+                continue
+            reduced.append(points[i])
+        reduced.append(points[-1])
+        steps.append({"name": f"pen stroke {len(steps)+1}", "tool": "stroke",
+                      "color": "black", "width": 1, "points": reduced})
     if not steps:
-        raise ValueError("No binary outlines found")
-    return {"name": f"{source.stem}-outlines", "mode": "binary-outlines-only",
+        raise ValueError("No connected binary pen strokes found")
+    return {"name": f"{source.stem}-binary-pen", "mode": "binary-pen-strokes",
             "binary": {"zero": "white", "one": "black", "width": size[0],
-                       "height": size[1], "outlines": len(steps), "fill_enabled": False},
+                       "height": size[1], "strokes": len(steps), "fill_enabled": False},
             "steps": steps}
