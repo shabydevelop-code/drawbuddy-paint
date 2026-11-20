@@ -57,6 +57,56 @@ def _vertical_region_paths(mask, left, top):
     return paths
 
 
+
+def _interior_line_paths(mask, left, top):
+    """Follow connected thin ink pixels as continuous strokes."""
+    pixels = set(zip(*np.where(mask > 0)))
+    if not pixels:
+        return []
+    offsets = ((-1, 0), (1, 0), (0, -1), (0, 1),
+               (-1, -1), (-1, 1), (1, -1), (1, 1))
+    neighbors = {}
+    for y, x in pixels:
+        adjacent = [(y + dy, x + dx) for dy, dx in offsets
+                    if (y + dy, x + dx) in pixels]
+        neighbors[(y, x)] = [q for q in adjacent
+                             if q[0] == y or q[1] == x or
+                             ((y, q[1]) not in pixels and
+                              (q[0], x) not in pixels)]
+    visited = set()
+    paths = []
+
+    def edge(a, b):
+        return (a, b) if a < b else (b, a)
+
+    def follow(start, nxt):
+        path = [start, nxt]
+        visited.add(edge(start, nxt))
+        previous, current = start, nxt
+        while len(neighbors[current]) == 2:
+            choices = [q for q in neighbors[current]
+                       if q != previous and edge(current, q) not in visited]
+            if not choices:
+                break
+            following = choices[0]
+            visited.add(edge(current, following))
+            path.append(following)
+            previous, current = current, following
+        if len(path) >= 3:
+            _append_path(paths, [(x, y) for y, x in path], left, top)
+
+    for start in sorted(pixels):
+        if len(neighbors[start]) != 2:
+            for nxt in neighbors[start]:
+                if edge(start, nxt) not in visited:
+                    follow(start, nxt)
+    for start in sorted(pixels):
+        for nxt in neighbors[start]:
+            if edge(start, nxt) not in visited:
+                follow(start, nxt)
+    return paths
+
+
 def build_natural_drawing(source):
     raster = build_color_raster_drawing(source)
     width, height = raster['color']['width'], raster['color']['height']
@@ -69,7 +119,7 @@ def build_natural_drawing(source):
             mask[y - top, x1 - left:x2 - left + 1] = 1
         masks[step['color']] = mask
     black = masks.get('black', np.zeros((height, width), dtype=np.uint8))
-    contours, _ = cv2.findContours(black, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    contours, _ = cv2.findContours(black, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     contours = sorted(contours, key=lambda c: -cv2.arcLength(c, True))
     steps = []
     traced = np.zeros_like(black)
@@ -87,14 +137,27 @@ def build_natural_drawing(source):
     if outlines:
         steps.append({'name': 'Natural dark outlines', 'tool': 'brush_paths',
                       'color': 'black', 'width': 1, 'paths': outlines})
-    # Keep all source colors. Finish with black interior details for crisp
-    # facial features, without redrawing the traced contour pixels.
+    # Interior boundaries (including leg separation) are also real contours.
+    # Trace these before the vertical fill instead of fragmenting them into
+    # one-column hatch strokes.
+    interior = black.copy()
+    interior[traced != 0] = 0
+    # Only trace thin interior linework; thick areas remain fill regions.
+    distance = cv2.distanceTransform(interior, cv2.DIST_L2, 3)
+    thin = ((interior != 0) & (distance <= 1.5)).astype(np.uint8)
+    details = _interior_line_paths(thin, left, top)
+    if details:
+        steps.append({'name': 'Natural interior connected lines',
+                      'tool': 'brush_paths', 'color': 'black',
+                      'width': 1, 'paths': details})
+    covered = traced.copy()
+    covered[thin != 0] = 1
     for color in ('brown', 'orange', 'black'):
         if color not in masks:
             continue
         fill = masks[color].copy()
         if color == 'black':
-            fill[traced != 0] = 0
+            fill[covered != 0] = 0
         paths = _vertical_region_paths(fill, left, top)
         if paths:
             steps.append({'name': f'Natural {color} region fill',
@@ -108,5 +171,6 @@ def build_natural_drawing(source):
     return {'name': raster['name'] + '-natural-precision', 'mode': 'natural',
             'natural': {'width': width, 'height': height,
                         'outline_paths': len(outlines),
+                        'interior_line_paths': len(details),
                         'fill_paths': sum(len(s['paths']) for s in steps[1:])},
             'steps': steps}
