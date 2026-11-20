@@ -117,3 +117,38 @@ def build_region_drawing(source, max_width=500, max_height=350, threshold=None):
             "binary": {"zero": "white", "one": "black", "width": target[0],
                        "height": target[1], "regions": len(steps)},
             "steps": steps}
+
+
+def build_outline_drawing(source, max_width=500, max_height=350, threshold=None):
+    """Stage A: draw every meaningful 0/1 boundary, without any bucket fills."""
+    source = Path(source)
+    gray = cv2.imread(str(source), cv2.IMREAD_GRAYSCALE)
+    if gray is None:
+        raise FileNotFoundError(f"Cannot read image: {source}")
+    height, width = gray.shape
+    scale = min(max_width / width, max_height / height)
+    size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    gray = cv2.resize(gray, size, interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_NEAREST)
+    if threshold is None:
+        _, ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    else:
+        if not 0 <= threshold <= 255:
+            raise ValueError("threshold must be 0..255")
+        ink = np.where(gray < threshold, 255, 0).astype(np.uint8)
+    contours, hierarchy = cv2.findContours(ink, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    left = 310 + (max_width - size[0]) // 2
+    top = 155 + (max_height - size[1]) // 2
+    steps = []
+    for contour in contours:
+        if len(contour) < 3 or cv2.arcLength(contour, True) < 6:
+            continue
+        points = [[left + int(p[0][0]), top + int(p[0][1])] for p in contour]
+        points.append(points[0])
+        steps.append({"name": f"outline {len(steps)+1}", "tool": "stroke",
+                      "color": "black", "width": 1, "points": points})
+    if not steps:
+        raise ValueError("No binary outlines found")
+    return {"name": f"{source.stem}-outlines", "mode": "binary-outlines-only",
+            "binary": {"zero": "white", "one": "black", "width": size[0],
+                       "height": size[1], "outlines": len(steps), "fill_enabled": False},
+            "steps": steps}
