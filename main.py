@@ -283,6 +283,49 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     # These accent strokes are last: the main recognizable contours remain
     # continuous during the drawing process.
     plan.extend(thickness_paths)
+    # Complete source ink at Paint resolution, not just the skeleton.
+    # Only fill pixels that no existing stroke covers. This preserves the
+    # continuous outline gestures while restoring solid spots and thick lines.
+    source_ink_runs = data.get('ink_runs')
+    fill_paths = []
+    missing_fill_pixels = 0
+    if source_ink_runs is not None and limit is None:
+        target_ink = set()
+        for run in source_ink_runs:
+            if (not isinstance(run, list) or len(run) != 3 or
+                    not all(isinstance(v, int) for v in run)):
+                raise ValueError('Invalid ink_runs entry')
+            y, x0, x1 = run
+            if not (0 <= y < height and 0 <= x0 <= x1 < width):
+                raise ValueError('Source ink run outside image')
+            yy = top + round(y * scale)
+            xa = left + round(x0 * scale)
+            xb = left + round(x1 * scale)
+            target_ink.update((x, yy) for x in range(xa, xb + 1))
+        existing = set()
+        for _, points in plan:
+            if len(points) == 1:
+                existing.add(tuple(points[0]))
+            for a, b in zip(points, points[1:]):
+                existing.update(pixels_between(tuple(a), tuple(b)))
+        missing = target_ink - existing
+        missing_fill_pixels = len(missing)
+        # Horizontal runs guarantee that every added pixel belongs to the
+        # actual source ink. No guessed offsets or perpendicular scribbles.
+        by_row = {}
+        for x, y in missing:
+            by_row.setdefault(y, []).append(x)
+        for y in sorted(by_row):
+            xs = sorted(by_row[y])
+            start = prev = xs[0]
+            for x in xs[1:] + [None]:
+                if x is not None and x == prev + 1:
+                    prev = x
+                    continue
+                fill_paths.append((1, [[start, y], [prev, y]]))
+                if x is not None:
+                    start = prev = x
+        plan.extend(fill_paths)
     # Validate planned motion and report natural contour intersections.
     planned_pixels = set()
     overlap_count = 0
@@ -310,6 +353,9 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     report = {'source_paths': len(selected_paths),
               'planned_strokes': len(plan),
               'thickness_accent_strokes': len(thickness_paths),
+              'source_ink_fill_strokes': len(fill_paths),
+              'source_ink_pixels_restored': missing_fill_pixels,
+              'source_ink_run_data_available': source_ink_runs is not None,
               'canvas_resolution': [dest_w, dest_h],
               'coordinate_scale': round(scale, 5),
               'joined_adjacent_trails': joined_trails,
