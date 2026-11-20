@@ -158,9 +158,43 @@ def build_centerline_drawing(source, max_width=240, max_height=180):
     for path in paths:
         pts = np.array([[x - left, y - top] for x, y in path], np.int32)
         cv2.polylines(preview, [pts], False, (0, 0, 0), 2)
+    # Preflight: simulate the exact planned strokes as Paint barriers.
+    # No bucket fill is allowed until every candidate color region is
+    # demonstrably enclosed. Unknown or open regions are marked unsafe.
+    barrier = np.zeros((height, width), dtype=np.uint8)
+    for path in outside + paths:
+        pts = np.array([[x - left, y - top] for x, y in path], np.int32)
+        cv2.polylines(barrier, [pts], False, 255, 2)
+    for path in colored:
+        pts = np.array([[x - left, y - top] for x, y in path], np.int32)
+        cv2.polylines(barrier, [pts], False, 255, 1)
+    free = (barrier == 0).astype(np.uint8)
+    regions, labels, stats, _ = cv2.connectedComponentsWithStats(free, 4)
+    # The canvas exterior is a flood-fill escape region. An enclosed region
+    # must never touch the image boundary; count only sizeable components.
+    boundary_ids = set(np.unique(np.concatenate(
+        (labels[0, :], labels[-1, :], labels[:, 0], labels[:, -1]))))
+    enclosed = []
+    for index in range(1, regions):
+        if index in boundary_ids or int(stats[index, cv2.CC_STAT_AREA]) < 4:
+            continue
+        enclosed.append(index)
+    # This report is diagnostic, NOT permission to use the bucket. Some
+    # color areas can share an enclosure without a complete dividing border.
+    unsafe = regions - 1 - len(enclosed)
+    closure_preview = cv2.cvtColor(barrier, cv2.COLOR_GRAY2BGR)
+    closure_preview[barrier == 0] = (255, 255, 255)
+    for index in enclosed:
+        closure_preview[labels == index] = (210, 245, 210)
+    for index in boundary_ids:
+        if index != 0:
+            closure_preview[labels == index] = (210, 210, 255)
     output = Path('output')
     output.mkdir(exist_ok=True)
     preview_path = output / 'centerline-plan-preview.png'
+    closure_path = output / 'centerline-closure-preview.png'
+    if not cv2.imwrite(str(closure_path), closure_preview):
+        raise OSError(f'Could not write {closure_path}')
     if not cv2.imwrite(str(preview_path), preview):
         raise OSError(f'Could not write {preview_path}')
 
@@ -182,5 +216,9 @@ def build_centerline_drawing(source, max_width=240, max_height=180):
                         'outer_silhouette_paths': len(outside),
                         'colored_paths': len(colored),
                         'skeleton_pixels': int(np.count_nonzero(skeleton)),
-                        'preview': str(preview_path), 'fill': False},
+                        'preview': str(preview_path),
+                        'closure_preview': str(closure_path),
+                        'enclosed_regions': len(enclosed),
+                        'open_regions': unsafe,
+                        'bucket_fill_safe': False, 'fill': False},
             'steps': steps}
