@@ -29,18 +29,31 @@ def export_visual_layers(scene, output):
     labels = np.asarray(scene['labels'], dtype=np.uint8)
     palette = np.asarray(scene['palette'], dtype=np.uint8)
     rgb = palette[labels]
-    # Darkness is a property of the rendered color, not a palette index.
-    lum = (0.2126 * rgb[:, :, 0] + 0.7152 * rgb[:, :, 1] +
-           0.0722 * rgb[:, :, 2])
-    spread = rgb.max(axis=2).astype(np.int16) - rgb.min(axis=2).astype(np.int16)
-    # Neutral dark outlines; saturated brown/orange fills are not ink.
-    ink_raw = np.uint8((lum < 105) & (spread < 100)) * 255
+    # Trace ink from the ORIGINAL image, not the k-means palette.
+    # Quantization can erase thin toe separators, mouth shadows and
+    # small markings before the skeletonizer ever sees them.
+    source_path = Path(scene['source'])
+    source_bgr = cv2.imread(str(source_path), cv2.IMREAD_COLOR)
+    if source_bgr is None or source_bgr.shape[:2] != labels.shape:
+        raise ValueError('Original scene source is missing or dimensions changed')
+    source_rgb = cv2.cvtColor(source_bgr, cv2.COLOR_BGR2RGB)
+    lum = (0.2126 * source_rgb[:, :, 0] +
+           0.7152 * source_rgb[:, :, 1] +
+           0.0722 * source_rgb[:, :, 2])
+    spread = (source_rgb.max(axis=2).astype(np.int16) -
+              source_rgb.min(axis=2).astype(np.int16))
+    # Preserve faint anti-aliased ink while excluding saturated color.
+    ink_raw = np.uint8((lum < 155) & (spread < 100)) * 255
     count, components, stats, _ = cv2.connectedComponentsWithStats(
         ink_raw, connectivity=8)
     kept = np.zeros(count, dtype=np.uint8)
     if count > 1:
-        kept[1:] = (stats[1:, cv2.CC_STAT_AREA] >= 10).astype(np.uint8)
+        # Two-pixel details are meaningful at the dog's eyes and paws.
+        kept[1:] = (stats[1:, cv2.CC_STAT_AREA] >= 2).astype(np.uint8)
     ink = kept[components] * 255
+    # Source fidelity is measured against raw detected ink; removed noise
+    # is explicit rather than silently lost during color quantization.
+    missing_source_ink = int(np.count_nonzero((ink_raw != 0) & (ink == 0)))
     centerline = _skeleton(ink)
     stroke_report = export_strokes(ink, centerline, out)
 
@@ -71,9 +84,13 @@ def export_visual_layers(scene, output):
     mismatch = int(np.count_nonzero(np.any(reconstructed != expected, axis=2)))
     report = {
         'method': 'dark-neutral-ink-separation',
-        'ink_luminance_threshold': 105,
+        'ink_luminance_threshold': 155,
         'ink_chroma_threshold': 100,
-        'min_ink_component_pixels': 10,
+        'min_ink_component_pixels': 2,
+        'ink_detection_source': 'original_rgb_before_palette_quantization',
+        'raw_detected_ink_pixels': int(np.count_nonzero(ink_raw)),
+        'source_ink_pixels_removed_as_noise': missing_source_ink,
+        'source_ink_retention_ratio': round(float(np.count_nonzero(ink)) / max(1, np.count_nonzero(ink_raw)), 6),
         'ink_pixels': int(np.count_nonzero(ink)),
         'centerline_pixels': int(np.count_nonzero(centerline)),
         'excluded_dark_noise_pixels': int(np.count_nonzero(ink_raw & ~ink)),
