@@ -1,78 +1,81 @@
-"""Serpentine coverage of the existing calibrated 0/1/color pixel map.
+"""Color-map pencil planning with bounded overlap and verified planned coverage.
 
-Long row runs are connected by shortest safe paths inside the same-color
-component. Never teleport the pressed pencil or draw through another color.
+Sweep runs once; connect only nearby endpoints when the connecting line is
+same-color and has little already-painted overlap. Otherwise lift the pencil.
 """
-from collections import deque
 import cv2
 import numpy as np
 from .binary_painter import build_color_raster_drawing
 
+MAX_BRIDGE_PIXELS = 3
 
-def _safe_bridge(start, goal, component, bounds):
-    """Shortest 8-connected route entirely inside a same-color component."""
-    if start == goal:
-        return [start]
-    x0, y0, x1, y1 = bounds
-    queue = deque([start])
-    parents = {start: None}
-    directions = ((1, 0), (-1, 0), (0, 1), (0, -1),
-                  (1, 1), (1, -1), (-1, 1), (-1, -1))
-    while queue:
-        x, y = queue.popleft()
-        for dx, dy in directions:
-            nx, ny = x + dx, y + dy
-            point = (nx, ny)
-            if (x0 <= nx < x1 and y0 <= ny < y1 and
-                    component[ny, nx] and point not in parents):
-                parents[point] = (x, y)
-                if point == goal:
-                    route = [point]
-                    while parents[route[-1]] is not None:
-                        route.append(parents[route[-1]])
-                    return route[::-1]
-                queue.append(point)
-    raise RuntimeError('Same-color component has no safe bridge')
+
+def _line_pixels(a, b):
+    """All integer pixels touched by the candidate connector."""
+    x0, y0 = a
+    x1, y1 = b
+    n = max(abs(x1 - x0), abs(y1 - y0))
+    if n == 0:
+        return [a]
+    return [(round(x0 + (x1 - x0) * i / n),
+             round(y0 + (y1 - y0) * i / n)) for i in range(n + 1)]
 
 
 def _continuous_paths(mask, left, top):
-    """Sweep each component in long horizontal rows with safe connectors."""
+    """Draw each row run once; join only short, safe, low-overlap segments."""
     h, w = mask.shape
     count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
     ids = sorted(range(1, count), key=lambda i: -int(stats[i, cv2.CC_STAT_AREA]))
-    paths = []
     covered = np.zeros_like(mask, dtype=np.uint8)
+    paths = []
+    overlaps = 0
     for component_id in ids:
-        x0, y0, cw, ch, area = map(int, stats[component_id])
-        x1, y1 = x0 + cw, y0 + ch
-        component = labels == component_id
-        bounds = (x0, y0, x1, y1)
+        x0, y0, cw, ch, _ = map(int, stats[component_id])
         runs = []
-        for y in range(y0, y1):
-            row = component[y, x0:x1].astype(np.int8)
+        for y in range(y0, y0 + ch):
+            row = (labels[y, x0:x0 + cw] == component_id).astype(np.int8)
             padded = np.pad(row, (1, 1))
             starts = np.flatnonzero(np.diff(padded) == 1)
             ends = np.flatnonzero(np.diff(padded) == -1) - 1
-            row_runs = [(x0 + int(a), x0 + int(b), y) for a, b in zip(starts, ends)]
-            # Alternate row direction to keep the pencil near the next row.
+            row_runs = [(x0 + int(a), x0 + int(b), y)
+                        for a, b in zip(starts, ends)]
             if (y - y0) % 2:
                 row_runs.reverse()
-            runs.extend(([(a, y), (b, y)] if (y-y0) % 2 == 0
-                         else [(b, y), (a, y)]) for a, b, _ in row_runs)
-        if not runs:
-            continue
-        route = list(runs[0])
-        for segment in runs[1:]:
-            bridge = _safe_bridge(route[-1], segment[0], component, bounds)
-            route.extend(bridge[1:])
-            route.extend(segment[1:] if route[-1] == segment[0] else segment)
-        # Explicitly verify each intended pixel is included by a row sweep.
-        covered[component] = 1
-        if len(route) == 1:
-            route.append(route[0])
-        paths.append([[left + x, top + y] for x, y in route])
+            for a, b, yy in row_runs:
+                runs.append(((a, yy), (b, yy)) if (y - y0) % 2 == 0
+                            else ((b, yy), (a, yy)))
+        current = None
+        for start, end in runs:
+            segment_pixels = _line_pixels(start, end)
+            if current is not None:
+                bridge = _line_pixels(current[-1], start)
+                # A short diagonal is allowed only if every traversed pixel
+                # belongs to the target color. Never redraw a long route.
+                safe = (len(bridge) - 1 <= MAX_BRIDGE_PIXELS and
+                        all(0 <= x < w and 0 <= y < h and
+                            labels[y, x] == component_id for x, y in bridge))
+                # Do not create a connector that mostly retraces old paint.
+                repeated = sum(bool(covered[y, x]) for x, y in bridge[1:-1]) if safe else 0
+                if safe and repeated <= 1:
+                    current.extend([list(p) for p in bridge[1:]])
+                else:
+                    paths.append([[left + x, top + y] for x, y in current])
+                    current = None
+            if current is None:
+                current = [list(start)]
+            if end != start:
+                current.append(list(end))
+            # All pixels on a row run are covered exactly once by the sweep.
+            for x, y in segment_pixels:
+                if covered[y, x]:
+                    raise RuntimeError('Unexpected duplicate row coverage')
+                covered[y, x] = 1
+        if current is not None:
+            if len(current) == 1:
+                current.append(current[0][:])
+            paths.append([[left + x, top + y] for x, y in current])
     if not np.array_equal(covered != 0, mask != 0):
-        raise RuntimeError('Serpentine planner failed exact pixel coverage')
+        raise RuntimeError('Coverage mismatch: some source pixels were skipped')
     return paths
 
 
@@ -91,13 +94,14 @@ def build_continuous_color_drawing(source):
             mask[y - top, x1 - left:x2 - left + 1] = 1
         paths = _continuous_paths(mask, left, top)
         if paths:
-            steps.append({'name': f'Serpentine {name}', 'tool': 'brush_paths',
+            steps.append({'name': f'Coverage-aware {name}', 'tool': 'brush_paths',
                           'color': name, 'width': 1, 'paths': paths})
             statistics[name] = {'pixels': int(mask.sum()), 'pencil_lifts': len(paths),
                                 'mouse_positions': sum(len(p) for p in paths)}
     if not steps:
         raise ValueError('No colored pixels to draw')
-    return {'name': raster['name'] + '-serpentine',
+    return {'name': raster['name'] + '-coverage-aware',
             'continuous': {'width': width, 'height': height,
-                           'colors': len(steps), 'statistics': statistics},
+                           'colors': len(steps), 'statistics': statistics,
+                           'max_bridge_pixels': MAX_BRIDGE_PIXELS},
             'steps': steps}
