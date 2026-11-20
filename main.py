@@ -9,6 +9,7 @@ from drawbuddy.freehand_painter import build_freehand_drawing
 from drawbuddy.lineart_painter import build_lineart_drawing
 from drawbuddy.centerline_painter import build_centerline_drawing
 from drawbuddy.region_vectorizer import analyze_regions
+from drawbuddy.region_painter import build_region_outline_drawing
 from drawbuddy.continuous_painter import build_continuous_color_drawing
 from drawbuddy.natural_painter import build_natural_drawing
 from drawbuddy.result_publisher import ResultPublisher
@@ -23,6 +24,7 @@ def main():
     parser.add_argument('--no-publish-result', action='store_true', help='Skip automatic Paint canvas capture and GitHub upload')
     parser.add_argument('--natural-source', type=Path, help='Trace outlines and fill color regions with natural vertical strokes')
     parser.add_argument('--continuous-source', type=Path, help='Optimize 0/1/color pixels into continuous mouse strokes')
+    parser.add_argument('--region-draw-source', type=Path, help='Draw shared region boundaries in Paint, no bucket fill')
     parser.add_argument('--region-source', type=Path, help='Analyze source regions and export boundary preview without launching Paint')
     parser.add_argument('--centerline-source', type=Path, help='Experimental 2px centerline contours without fills')
     parser.add_argument('--lineart-source', type=Path, help='Draw black outlines only, with no fill')
@@ -35,6 +37,8 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
+    if args.region_draw_source and (args.region_source or args.centerline_source or args.natural_source or args.continuous_source or args.lineart_source or args.freehand_source or args.binary_source or args.drawing):
+        parser.error('Use --region-draw-source alone')
     if args.region_source:
         if any((args.centerline_source, args.natural_source, args.continuous_source,
                 args.lineart_source, args.freehand_source, args.binary_source, args.drawing)):
@@ -53,7 +57,10 @@ def main():
         parser.error('Use --lineart-source alone')
     if args.freehand_source and (args.binary_source or args.drawing):
         parser.error('Use --freehand-source alone, without a drawing or --binary-source')
-    if args.centerline_source:
+    if args.region_draw_source:
+        drawing = build_region_outline_drawing(args.region_draw_source)
+        print(f'Region drawing plan: {drawing["region_drawing"]}')
+    elif args.centerline_source:
         drawing = build_centerline_drawing(args.centerline_source)
         print(f'Centerline drawing plan: {drawing["lineart"]}')
     elif args.natural_source:
