@@ -163,6 +163,12 @@ def build_natural_drawing(source):
             steps.append({'name': f'Natural {color} region fill',
                           'tool': 'brush_paths', 'color': color,
                           'width': 1, 'paths': paths})
+    # Paint uses opaque pencil strokes. Always lay down color and black
+    # interior fill first, then restore the source's continuous black ink
+    # contours and connected leg details as the final visible layer.
+    fill_steps = [s for s in steps if 'region fill' in s['name']]
+    line_steps = [s for s in steps if 'region fill' not in s['name']]
+    steps = fill_steps + line_steps
     if not steps:
         raise ValueError('No natural drawing strokes')
     for step in steps:
@@ -172,5 +178,5 @@ def build_natural_drawing(source):
             'natural': {'width': width, 'height': height,
                         'outline_paths': len(outlines),
                         'interior_line_paths': len(details),
-                        'fill_paths': sum(len(s['paths']) for s in steps[1:])},
+                        'fill_paths': sum(len(s['paths']) for s in fill_steps)},
             'steps': steps}
