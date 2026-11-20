@@ -231,7 +231,13 @@ class ReferenceTracingPipeline:
         mask = self.ink.from_image(source)
         paths = self.tracer.trace(self.thinner.thin(mask))
         color_mask, region_count = self.color_regions.extract(source, mask)
-        # Apply stricter filtering ONLY to added color boundaries.\n        # Preserve all original black details, including tiny eye features.\n        raw_color_paths = self.tracer.trace(self.thinner.thin(color_mask))\n        color_paths = [p for p in raw_color_paths\n                       if cv2.arcLength(np.asarray(p, dtype=np.int32), False) >= 24\n                       and len(p) >= 3]
+        # Filter only added color boundaries; keep small black eye details.
+        raw_color_paths = self.tracer.trace(self.thinner.thin(color_mask))
+        color_paths = [
+            p for p in raw_color_paths
+            if len(p) >= 3
+            and cv2.arcLength(np.asarray(p, dtype=np.int32), False) >= 24
+        ]
         if not paths:
             raise ValueError("No ink paths found")
         # Map all paths together so the original and color edges align.
