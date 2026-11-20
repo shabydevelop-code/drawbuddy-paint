@@ -2,7 +2,7 @@
 import time
 from .elements import ELEMENTS
 
-RGB = {'orange': (255, 127, 39), 'brown': (185, 122, 87), 'black': (0, 0, 0)}
+RGB = {'orange': (255, 127, 39), 'brown': (185, 122, 87), 'black': (0, 0, 0), 'white': (255, 255, 255)}
 
 
 def close_to(actual, expected, tolerance=30):
