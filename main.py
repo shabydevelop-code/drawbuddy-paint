@@ -64,57 +64,92 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
                 err += dx
                 y0 += sy
 
-    candidates = []
+    # Rebuild connected pen gestures at *Paint resolution*. Source skeleton
+    # paths are frequently only 1-4 pixels long; filtering them independently
+    # discarded >99% of the dog. Join their edges before evaluating length.
+    adjacency = {}
+    dots = set()
+    pixel_sizes = {}
+    source_pixels = set()
     for record in selected_paths:
         mapped = []
-        radii = []
         for point in record.get('points', []):
             if (not isinstance(point, list) or len(point) != 3 or
-                    not all(isinstance(v, (int, float)) for v in point) or
+                    not all(isinstance(v, (int, float)) and math.isfinite(v)
+                            for v in point) or
                     not 0 <= point[0] < width or
-                    not 0 <= point[1] < height):
+                    not 0 <= point[1] < height or point[2] < 0):
                 raise ValueError('Invalid Scene Engine stroke coordinates')
             x, y, radius = point
-            if not math.isfinite(radius) or radius < 0:
-                raise ValueError('Invalid Scene Engine stroke radius')
-            radii.append(radius)
             dest = (left + round(x * scale), top + round(y * scale))
+            diameter = 2 * radius * scale
+            size = 1 if diameter < 1.5 else (2 if diameter < 3 else (3 if diameter < 5 else 4))
+            pixel_sizes[dest] = max(pixel_sizes.get(dest, 1), size)
             if not mapped or mapped[-1] != dest:
                 mapped.append(dest)
-        if len(mapped) < 2:
-            rejected_short += 1
+        if not mapped:
             continue
-        pixels = []
-        for i, (start, end) in enumerate(zip(mapped, mapped[1:])):
-            segment = list(pixels_between(start, end))
-            pixels.extend(segment if i == 0 else segment[1:])
-        # Require an actual long gesture, not a short raster fragment.
-        if len(set(pixels)) < min_stroke_pixels:
-            rejected_short += 1
-            continue
-        # Reject self-overlapping gestures; don't turn loops into printing.
-        if len(set(pixels)) != len(pixels):
-            rejected_overlap += 1
-            continue
-        # Paint's four ribbon sizes are discrete, so use a representative
-        # scaled diameter for each intact gesture, not one UI click per point.
-        scaled_diameter = 2 * (sorted(radii)[len(radii) // 2]) * scale
-        size = 1 if scaled_diameter < 1.5 else (2 if scaled_diameter < 3 else (3 if scaled_diameter < 5 else 4))
-        candidates.append((mapped, pixels, size))
+        dots.update(mapped)
+        for start, end in zip(mapped, mapped[1:]):
+            raster = list(pixels_between(start, end))
+            for u, v in zip(raster, raster[1:]):
+                if u == v:
+                    continue
+                adjacency.setdefault(u, set()).add(v)
+                adjacency.setdefault(v, set()).add(u)
+                source_pixels.update((u, v))
+        source_pixels.update(mapped)
 
-    # Keep each candidate's full gesture. Minor intersections are normal
-    # in line art; rejecting whole paths at the first shared pixel destroys
-    # the subject. Suppress only nearly redundant paths.
-    candidates.sort(key=lambda item: len(item[1]), reverse=True)
-    for mapped, pixels, size in candidates:
-        overlap = sum(p in visited_pixels for p in pixels)
-        # Only discard paths already covered almost completely.
-        if overlap / len(pixels) >= 0.90:
-            rejected_overlap += 1
-            duplicate_pixels += overlap
+    # Consume each undirected edge once. Continue through junctions using
+    # the straightest available continuation, avoiding arbitrary zigzags.
+    remaining = {frozenset((u, v)) for u, neighbors in adjacency.items()
+                 for v in neighbors}
+    def follow(start, first):
+        chain = [start, first]
+        remaining.remove(frozenset((start, first)))
+        previous, current = start, first
+        while True:
+            options = [p for p in adjacency[current]
+                       if frozenset((current, p)) in remaining]
+            if not options:
+                break
+            dx, dy = current[0]-previous[0], current[1]-previous[1]
+            nxt = max(options, key=lambda p: (
+                (p[0]-current[0])*dx + (p[1]-current[1])*dy,
+                -abs((p[0]-current[0])*dy-(p[1]-current[1])*dx),
+                -p[1], -p[0]))
+            remaining.remove(frozenset((current, nxt)))
+            chain.append(nxt)
+            previous, current = current, nxt
+            if current == start:
+                break
+        return chain
+
+    chains = []
+    for point in sorted(adjacency):
+        if len(adjacency[point]) == 2:
             continue
-        visited_pixels.update(pixels)
-        plan.append((size, [list(p) for p in mapped]))
+        for neighbor in sorted(adjacency[point]):
+            if frozenset((point, neighbor)) in remaining:
+                chains.append(follow(point, neighbor))
+    while remaining:
+        edge = min(remaining, key=lambda e: tuple(sorted(e)))
+        start, neighbor = sorted(edge)
+        chains.append(follow(start, neighbor))
+    # Preserve isolated ink pixels as dots instead of silently dropping them.
+    covered = set(adjacency)
+    for point in sorted(dots - covered):
+        chains.append([point, point])
+
+    for chain in chains:
+        # At 240x180 resolution, one-pixel details matter. Do not filter
+        # reconstructed gestures by the former source-path length threshold.
+        sizes = sorted(pixel_sizes.get(p, 1) for p in chain)
+        size = sizes[len(sizes)//2]
+        plan.append((size, [list(p) for p in chain]))
+    rejected_short = 0
+    rejected_overlap = 0
+    duplicate_pixels = 0
     if not plan:
         raise ValueError('No drawable paths after mapping')
     # Validate planned motion and report natural contour intersections.
@@ -149,6 +184,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
               'median_stroke_vertices': sorted(lengths)[len(lengths)//2],
               'paint_size_levels': width_counts,
               'unique_pixels': len(planned_pixels),
+              'source_unique_pixels': len(source_pixels),
               'repeated_pixel_visits': overlap_count,
               'overlaps_allowed_for_natural_contours': True,
               'skipped_source_pixel_visits': duplicate_pixels,
@@ -157,12 +193,12 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     print('Scene path validation:', json.dumps(report, indent=2))
     if out_of_bounds:
         raise RuntimeError('Scene path validation FAILED: out-of-bounds motion')
-    retained_ratio = len(plan) / len(selected_paths)
-    if retained_ratio < 0.05:
-        print(f'FAIL: only {retained_ratio:.2%} of source paths survived planning; Paint drawing blocked.')
-        raise RuntimeError('Scene planning lost nearly all source geometry; do not draw sparse dots')
+    coverage_ratio = len(planned_pixels & source_pixels) / max(1, len(source_pixels))
+    print(f'Scene source pixel coverage: {coverage_ratio:.2%}')
+    if coverage_ratio < 0.95:
+        raise RuntimeError('Scene planning lost source pixels; Paint drawing blocked')
     if validate_only:
-        print('PASS: planned Paint paths stay in bounds and retain sufficient source paths.')
+        print('PASS: planned Paint paths stay in bounds and preserve source ink pixels.')
         return
     engine = DrawingEngine(speed=speed)
     # Validate every planned position before touching the Paint canvas.
