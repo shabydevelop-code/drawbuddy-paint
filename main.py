@@ -249,38 +249,100 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             ordered.append((size, points))
             cursor = points[-1]
     plan = ordered
-    # First pass: preserve every fine contour with the smallest pencil.
-    # Second pass: retrace only substantial source-thick portions with
-    # pencil size 3. Exactly one width change between the two passes.
-    base_plan = [(1, points) for _, points in plan]
-    heavy_plan = []
-    for _, points in base_plan:
-        run = []
-        for point in points:
-            # Protect the small, closely spaced eye and nose details.
-            # Coordinates are relative to the normalized dog image
-            # (reference: 247x270), so the exclusion scales with input.
-            local_x = (point[0] - left) / max(dest_w, 1)
-            local_y = (point[1] - top) / max(dest_h, 1)
-            facial_detail = (0.47 <= local_x <= 0.79 and
-                             0.14 <= local_y <= 0.40)
-            if not facial_detail and pixel_sizes.get(tuple(point), 1) >= 3:
-                if not run or run[-1] != point:
-                    run.append(point)
-            else:
-                if len(run) >= 5:
-                    heavy_plan.append((3, run))
-                run = []
-        if len(run) >= 5:
-            heavy_plan.append((3, run))
-    plan = base_plan + heavy_plan
-    width_merged_trails = 0
-    width_switches_estimate = int(bool(heavy_plan))
-    thickness_paths = heavy_plan
+    # Reconstruct wider source ink with short parallel pencil passes.
+    # Paint's ribbon width control is unreliable, so preserve the source
+    # radius using additional, explicitly planned 1px strokes. Restrict
+    # these to thick centerline pixels: fine paw/eye details stay untouched.
+    # These passes are derived from source radius, not invented contours.
+    thickness_paths = []
+    thick_pixels = {p for p, level in pixel_sizes.items() if level >= 3}
+    for size, points in plan:
+        if len(points) < 3:
+            continue
+        # Only thicken substantial runs. Avoid isolated pixels and junction
+        # clusters, which otherwise create black blobs on the face.
+        for offset in (-1, 1):
+            run = []
+            for i in range(1, len(points) - 1):
+                p = tuple(points[i])
+                before, after = points[i - 1], points[i + 1]
+                dx, dy = after[0] - before[0], after[1] - before[1]
+                length = math.hypot(dx, dy)
+                if p not in thick_pixels or length < 1:
+                    if len(run) >= 3:
+                        thickness_paths.append((1, run))
+                    run = []
+                    continue
+                nx = round(p[0] - offset * dy / length)
+                ny = round(p[1] + offset * dx / length)
+                shifted = [nx, ny]
+                if not run or run[-1] != shifted:
+                    run.append(shifted)
+            if len(run) >= 3:
+                thickness_paths.append((1, run))
+    # These accent strokes are last: the main recognizable contours remain
+    # continuous during the drawing process.
+    plan.extend(thickness_paths)
+    # Only repair substantial missing SOLID ink regions with closed contours.
+    # Never raster-print all missing pixels as horizontal mouse strokes.
+    source_ink_runs = data.get('ink_runs')
     fill_paths = []
     missing_fill_pixels = 0
     repair_components = 0
-    source_ink_runs = data.get('ink_runs')
+    if source_ink_runs is not None and limit is None:
+        import cv2
+        import numpy as np
+        target = np.zeros((dest_h, dest_w), dtype=np.uint8)
+        for run in source_ink_runs:
+            if (not isinstance(run, list) or len(run) != 3 or
+                    not all(isinstance(v, int) for v in run)):
+                raise ValueError('Invalid ink_runs entry')
+            y, x0, x1 = run
+            if not (0 <= y < height and 0 <= x0 <= x1 < width):
+                raise ValueError('Source ink run outside image')
+            yy = round(y * scale)
+            xa, xb = round(x0 * scale), round(x1 * scale)
+            if 0 <= yy < dest_h:
+                target[yy, max(0, xa):min(dest_w, xb + 1)] = 1
+        existing = np.zeros_like(target)
+        for _, points in plan:
+            for a, b in zip(points, points[1:]):
+                x0, y0 = a[0] - left, a[1] - top
+                x1, y1 = b[0] - left, b[1] - top
+                cv2.line(existing, (x0, y0), (x1, y1), 1, 1)
+            if len(points) == 1:
+                x, y = points[0]
+                if 0 <= x-left < dest_w and 0 <= y-top < dest_h:
+                    existing[y-top, x-left] = 1
+        missing = np.uint8((target != 0) & (existing == 0))
+        missing_fill_pixels = int(np.count_nonzero(missing))
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(
+            missing, connectivity=8)
+        for component_id in range(1, count):
+            x, y, w, h, area = map(int, stats[component_id])
+            # A thin missing line is not a solid spot; preserve the original
+            # centerline geometry instead of making it printer-like.
+            if area < 10 or min(w, h) < 3:
+                continue
+            region = np.uint8(labels[y:y+h, x:x+w] == component_id)
+            repair_components += 1
+            # Follow actual boundaries of missing solid regions. Eroded
+            # contours supply at most two inner passes for thicker spots.
+            for depth in range(3):
+                if not np.any(region):
+                    break
+                contours, _ = cv2.findContours(
+                    region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                for contour in contours:
+                    coords = [[left+x+int(p[0][0]), top+y+int(p[0][1])]
+                              for p in contour]
+                    if len(coords) >= 3:
+                        coords.append(coords[0])
+                        fill_paths.append((1, coords))
+                region = cv2.erode(region, np.ones((3, 3), np.uint8),
+                                   borderType=cv2.BORDER_CONSTANT,
+                                   borderValue=0)
+        plan.extend(fill_paths)
     # Validate planned motion and report natural contour intersections.
     planned_pixels = set()
     overlap_count = 0
@@ -312,10 +374,6 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
               'source_ink_pixels_missing_before_repair': missing_fill_pixels,
               'solid_ink_repair_components': repair_components,
               'source_ink_run_data_available': source_ink_runs is not None,
-              'variable_pencil_widths_enabled': True,
-              'width_levels_used': [1, 3] if heavy_plan else [1],
-              'same_width_trails_merged': width_merged_trails,
-              'estimated_pencil_size_changes': width_switches_estimate,
               'canvas_resolution': [dest_w, dest_h],
               'coordinate_scale': round(scale, 5),
               'joined_adjacent_trails': joined_trails,
@@ -357,14 +415,16 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     print('Use a NEW blank white maximized Paint canvas. F8 pauses/resumes.')
     engine.tools.select('pencil')
     engine.colors.select_primary('black')
-    # Calibrated pencil sizes 1..4; change only between complete gestures.
+    # Pencil-size changes were not producing observable thickness changes.
+    # Keep one calibrated width until a separate Paint size test proves
+    # the ribbon controls actually affect the pencil.
     import time
     import ctypes
-    engine.tools.pencil.click()
     engine.stroke_size.select(1)
+    engine.tools.pencil.click()
     engine.tools.current = 'pencil'
     time.sleep(0.6)
-    print(f'Scene Paint: fine contours first, then {len(heavy_plan)} heavy accents; at most one width change.')
+    print('Scene Paint uses constant Pencil size 1 (no ribbon size switching).')
 
     def wait_for_resume():
         # controller.stroke releases mouseUp in its finally clause before
@@ -379,11 +439,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             time.sleep(0.05)
         print('RESUMED.')
 
-    current_width = 1
     for index, (size, points) in enumerate(plan, 1):
-        if size != current_width:
-            engine.stroke_size.select(size)
-            current_width = size
         while True:
             try:
                 from drawbuddy.controller import check_cancel
@@ -400,32 +456,8 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     engine.paint.refresh_display()
 
 
-def calibrate_scene_pencil(speed):
-    """Four isolated pencil strokes to verify Paint ribbon width selection.
-
-    Intentionally does not alter the production dog drawing algorithm.
-    Run on a blank maximized Paint canvas and compare the four lines.
-    """
-    import time
-    engine = DrawingEngine(speed=speed)
-    engine.tools.select('pencil')
-    engine.colors.select_primary('black')
-    engine.tools.pencil.click()
-    engine.tools.current = 'pencil'
-    time.sleep(0.5)
-    print('Paint pencil calibration: four horizontal lines, top to bottom, sizes 1/2/3/4.')
-    for level in (1, 2, 3, 4):
-        engine.stroke_size.select(level)
-        time.sleep(0.35)
-        y = 190 + 42 * (level - 1)
-        engine.canvas.stroke([[310, y], [470, y]])
-        print(f'Pencil size {level}: y={y}')
-    print('Calibration complete. Check whether each line is visibly thicker than the one above.')
-
-
 def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
-    parser.add_argument('--calibrate-pencil', action='store_true', help='Draw four Paint pencil width test lines (1..4) on a blank canvas')
     parser.add_argument('--scene-strokes', type=Path, help='Draw Scene Engine ink-strokes.json in Paint (experimental)')
     parser.add_argument('--scene-min-stroke-pixels', type=int, default=8, help='Minimum unique pixels per natural pen stroke (default 8; try 5 for detail)')
     parser.add_argument('--scene-validate-only', action='store_true', help='Validate planned pen paths without opening or touching Paint')
@@ -448,13 +480,6 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
-    if args.calibrate_pencil:
-        if args.drawing or args.scene_strokes or any((args.region_draw_source, args.region_source,
-                args.centerline_source, args.natural_source, args.continuous_source,
-                args.lineart_source, args.freehand_source, args.binary_source)):
-            parser.error('--calibrate-pencil cannot be combined with drawing sources')
-        calibrate_scene_pencil(args.speed if args.speed is not None else 20.0)
-        return
     if args.scene_strokes:
         if args.drawing or any((args.region_draw_source, args.region_source,
                 args.centerline_source, args.natural_source, args.continuous_source,
