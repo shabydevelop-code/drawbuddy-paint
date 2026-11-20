@@ -443,18 +443,27 @@ class ReferenceTracingPipeline:
             candidates.append((region, color))
         # Nested and overlapping regions cannot safely be filled by a bucket
         # without a dedicated compositing pass. Exclude those regions.
+        from drawbuddy.drawing_engine import DrawingEngine
         safe = []
+        rejected = 0
         for region, color in candidates:
             if any(other["id"] != region["id"] and
                    ReferenceTracingPipeline._point_inside(
                        region["seed"], other["boundary"])
                    for other, _ in candidates):
                 continue
-            safe.append({
+            step = {
                 "name": f"Region {region['id']:03d}",
                 "tool": "closed_path", "color": color, "fill": color,
                 "width": 1, "smooth": False,
-                "points": region["boundary"], "fill_point": region["seed"]})
+                "points": region["boundary"], "fill_point": region["seed"]}
+            try:
+                DrawingEngine.verify_fill_boundary(step)
+            except ValueError:
+                rejected += 1
+                continue
+            safe.append(step)
+        print(f"Fill geometry preflight: {len(safe)} safe, {rejected} rejected")
         return safe
 
     def run(self, source, output, fill_solid_ink=False, region_map=False, paint_fills=False):
