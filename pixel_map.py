@@ -118,7 +118,61 @@ def export_seven_color_preview(rgb, output, grid_scale):
     print(f'  Indexed pixel map: {base.with_suffix(".json")}')
 
 
-def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_palette_16=False, palette_7=False):
+
+def compare_palette_sizes(rgb, output, sizes=(4, 6, 8, 12, 16)):
+    """Compare data-derived palettes; no preset 'correct' number of colors."""
+    samples = rgb.reshape(-1, 3).astype(np.float32)
+    reference = rgb.astype(np.float32)
+    # Strong source edges receive their own error metric, so broad white
+    # backgrounds do not hide loss of small dark features.
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(gray, 40, 120) > 0
+    results = []
+    for count in sizes:
+        cv2.setRNGSeed(42)
+        _, labels, centers = cv2.kmeans(
+            samples, count, None,
+            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.2),
+            5, cv2.KMEANS_PP_CENTERS)
+        centers = np.clip(np.rint(centers), 0, 255).astype(np.uint8)
+        ids = labels.reshape(rgb.shape[:2])
+        rendered = centers[ids]
+        error = np.mean(np.abs(reference - rendered.astype(np.float32)), axis=2)
+        counts = np.bincount(ids.reshape(-1), minlength=count)
+        order = np.argsort(-counts)
+        colors = [
+            {'rgb': '#%02X%02X%02X' % tuple(map(int, centers[i])),
+             'pixels': int(counts[i])}
+            for i in order
+        ]
+        name = output.with_name(output.stem + f'-palette{count}')
+        cv2.imwrite(str(name.with_suffix('.png')),
+                    cv2.cvtColor(rendered, cv2.COLOR_RGB2BGR))
+        results.append({
+            'count': count,
+            'mean_absolute_rgb_error': round(float(error.mean()), 4),
+            'edge_mean_absolute_rgb_error': round(
+                float(error[edges].mean()) if np.any(edges) else float(error.mean()), 4),
+            'colors': colors,
+            'preview': str(name.with_suffix('.png')),
+        })
+        print(f'{count:2} colors: RGB MAE={results[-1]["mean_absolute_rgb_error"]:.3f}, '
+              f'edge MAE={results[-1]["edge_mean_absolute_rgb_error"]:.3f}')
+    # This is a comparison report, not an ungrounded automatic declaration
+    # that a specific palette preserves all visual details.
+    report = {
+        'method': 'kmeans-rgb-on-resized-image',
+        'dimensions': [int(rgb.shape[1]), int(rgb.shape[0])],
+        'note': 'Lower errors are better. Inspect previews for detail preservation; '
+                'colors are not necessarily available as Paint swatches.',
+        'results': results,
+    }
+    path = output.with_name(output.stem + '-palette-comparison.json')
+    path.write_text(json.dumps(report, indent=2), encoding='utf-8')
+    print(f'Palette comparison: {path}')
+
+
+def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_palette_16=False, palette_7=False, compare_palettes=False):
     if width < 1 or height < 1 or grid_scale < 1:
         raise ValueError('Dimensions and grid scale must be positive')
     source = Path(source)
@@ -143,6 +197,8 @@ def build_pixel_map(source, output, width=300, height=328, grid_scale=4, paint_p
     x0, y0 = (width - dest_w) // 2, (height - dest_h) // 2
     canvas[y0:y0 + dest_h, x0:x0 + dest_w] = resized
     rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+    if compare_palettes:
+        compare_palette_sizes(rgb, output)
     if palette_7:
         export_seven_color_preview(rgb, output, grid_scale)
     if paint_palette_16:
@@ -190,9 +246,12 @@ def main():
                         help='Export comparison using 16 fixed Paint-style colors')
     parser.add_argument('--palette-7', action='store_true',
                         help='Generate an image and indexed pixel map with 7 computed colors')
+    parser.add_argument('--compare-palettes', action='store_true',
+                        help='Compare 4, 6, 8, 12, 16 color palettes with error metrics')
     args = parser.parse_args()
     build_pixel_map(args.source, args.output, args.width, args.height,
-                    args.grid_scale, args.paint_palette_16, args.palette_7)
+                    args.grid_scale, args.paint_palette_16, args.palette_7,
+                    args.compare_palettes)
 
 
 if __name__ == '__main__':
