@@ -1,0 +1,26 @@
+{
+  "name": "Dog - detailed 2D side profile (faces right)",
+  "reference": "dog_sculptgl(2).obj - simplified 2D interpretation of the model's main masses",
+  "steps": [
+    {"name":"Tail tip", "tool":"ellipse", "outline":"brown", "fill":"brown", "bounds":[245,280,318,333], "fill_point":[281,305]},
+    {"name":"Tail base", "tool":"ellipse", "outline":"orange", "fill":"orange", "bounds":[286,302,420,361], "fill_point":[354,331]},
+    {"name":"Far rear paw", "tool":"rounded_rectangle", "outline":"brown", "fill":"brown", "bounds":[442,549,514,610], "fill_point":[475,580]},
+    {"name":"Far rear leg", "tool":"rounded_rectangle", "outline":"brown", "fill":"brown", "bounds":[465,417,511,584], "fill_point":[487,530]},
+    {"name":"Far front paw", "tool":"rounded_rectangle", "outline":"brown", "fill":"brown", "bounds":[720,548,793,610], "fill_point":[758,582]},
+    {"name":"Far front leg", "tool":"rounded_rectangle", "outline":"brown", "fill":"brown", "bounds":[728,415,774,582], "fill_point":[751,523]},
+    {"name":"Near rear leg", "tool":"rounded_rectangle", "outline":"orange", "fill":"orange", "bounds":[524,420,589,602], "fill_point":[557,560]},
+    {"name":"Near front leg", "tool":"rounded_rectangle", "outline":"orange", "fill":"orange", "bounds":[784,420,849,602], "fill_point":[818,557]},
+    {"name":"Body silhouette", "tool":"rounded_rectangle", "outline":"orange", "fill":"orange", "bounds":[375,340,817,506], "fill_point":[585,420]},
+    {"name":"Chest", "tool":"ellipse", "outline":"orange", "fill":"orange", "bounds":[735,320,860,495], "fill_point":[793,409]},
+    {"name":"Neck", "tool":"rounded_rectangle", "outline":"orange", "fill":"orange", "bounds":[777,290,870,432], "fill_point":[822,355]},
+    {"name":"Back ear", "tool":"ellipse", "outline":"brown", "fill":"brown", "bounds":[846,190,900,329], "fill_point":[870,263]},
+    {"name":"Head silhouette", "tool":"ellipse", "outline":"orange", "fill":"orange", "bounds":[803,210,1000,402], "fill_point":[912,307]},
+    {"name":"Cheek", "tool":"ellipse", "outline":"orange", "fill":"orange", "bounds":[870,316,1003,409], "fill_point":[930,361]},
+    {"name":"Muzzle", "tool":"ellipse", "outline":"brown", "fill":"brown", "bounds":[952,316,1090,389], "fill_point":[1024,356]},
+    {"name":"Nose", "tool":"ellipse", "outline":"black", "fill":"black", "bounds":[1060,322,1097,356], "fill_point":[1078,339]},
+    {"name":"Near ear", "tool":"ellipse", "outline":"brown", "fill":"brown", "bounds":[830,214,895,347], "fill_point":[857,279]},
+    {"name":"Eye patch", "tool":"ellipse", "outline":"brown", "fill":"brown", "bounds":[941,264,987,318], "fill_point":[962,287]},
+    {"name":"Eye", "tool":"ellipse", "outline":"black", "fill":"black", "bounds":[959,280,976,299], "fill_point":[967,289]},
+    {"name":"Mouth spot", "tool":"ellipse", "outline":"black", "fill":"black", "bounds":[1024,370,1038,380], "fill_point":[1031,375]}
+  ]
+}
