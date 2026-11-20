@@ -249,6 +249,40 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             ordered.append((size, points))
             cursor = points[-1]
     plan = ordered
+    # Reconstruct wider source ink with short parallel pencil passes.
+    # Paint's ribbon width control is unreliable, so preserve the source
+    # radius using additional, explicitly planned 1px strokes. Restrict
+    # these to thick centerline pixels: fine paw/eye details stay untouched.
+    # These passes are derived from source radius, not invented contours.
+    thickness_paths = []
+    thick_pixels = {p for p, level in pixel_sizes.items() if level >= 3}
+    for size, points in plan:
+        if len(points) < 3:
+            continue
+        # Only thicken substantial runs. Avoid isolated pixels and junction
+        # clusters, which otherwise create black blobs on the face.
+        for offset in (-1, 1):
+            run = []
+            for i in range(1, len(points) - 1):
+                p = tuple(points[i])
+                before, after = points[i - 1], points[i + 1]
+                dx, dy = after[0] - before[0], after[1] - before[1]
+                length = math.hypot(dx, dy)
+                if p not in thick_pixels or length < 1:
+                    if len(run) >= 3:
+                        thickness_paths.append((1, run))
+                    run = []
+                    continue
+                nx = round(p[0] - offset * dy / length)
+                ny = round(p[1] + offset * dx / length)
+                shifted = [nx, ny]
+                if not run or run[-1] != shifted:
+                    run.append(shifted)
+            if len(run) >= 3:
+                thickness_paths.append((1, run))
+    # These accent strokes are last: the main recognizable contours remain
+    # continuous during the drawing process.
+    plan.extend(thickness_paths)
     # Validate planned motion and report natural contour intersections.
     planned_pixels = set()
     overlap_count = 0
@@ -275,6 +309,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     width_counts = {str(size): sum(level == size for level, _ in plan) for size in (1, 2, 3, 4)}
     report = {'source_paths': len(selected_paths),
               'planned_strokes': len(plan),
+              'thickness_accent_strokes': len(thickness_paths),
               'canvas_resolution': [dest_w, dest_h],
               'coordinate_scale': round(scale, 5),
               'joined_adjacent_trails': joined_trails,
