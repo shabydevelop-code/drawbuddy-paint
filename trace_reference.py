@@ -526,6 +526,66 @@ class ReferenceTracingPipeline:
         print(f"Created {output}: {region_count} color regions, {len(paths)} ink paths, {len(color_paths)} shared color boundaries; {len(steps)} strokes")
 
 
+
+def raster_drawing(source, output, pixel_step=2):
+    """Indexed 0/1 masks, run-length encoded per color; no contours or bucket.
+
+    Every destination grid cell is background (0) or one palette color (1).
+    Runs are merged horizontally to minimize mouse actions.
+    """
+    image = cv2.imread(str(source), cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(source)
+    from drawbuddy.components import RGB
+    h, w = image.shape[:2]
+    scale = min(520 / w, 365 / h)
+    target_w = max(1, round(w * scale / pixel_step))
+    target_h = max(1, round(h * scale / pixel_step))
+    reduced = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
+    rgb = cv2.cvtColor(reduced, cv2.COLOR_BGR2RGB).astype(np.int16)
+    palette = np.array(list(RGB.values()), dtype=np.int16)
+    names = list(RGB)
+    distance = np.sum((rgb[:, :, None, :] - palette[None, None, :, :]) ** 2, axis=3)
+    labels = np.argmin(distance, axis=2)
+    # White/near-white is always background. Unmatched colors remain background,
+    # never silently assigned a visually unrelated palette entry.
+    background = np.min(rgb, axis=2) > 238
+    matched = np.min(np.abs(rgb[:, :, None, :] - palette[None, None, :, :]), axis=3)
+    valid = (~background) & (np.min(np.max(np.abs(rgb[:, :, None, :] - palette[None, None, :, :]), axis=3), axis=2) <= 65)
+    # Preserve dark contours independently of nearest-palette matching.
+    dark = np.max(rgb, axis=2) < 100
+    labels[dark] = names.index("black")
+    valid |= dark
+    left = 310 + (520 - target_w * pixel_step) // 2
+    top = 155 + (365 - target_h * pixel_step) // 2
+    steps = []
+    for color_index, color in enumerate(names):
+        runs = []
+        for y in range(target_h):
+            x = 0
+            while x < target_w:
+                if not valid[y, x] or labels[y, x] != color_index:
+                    x += 1
+                    continue
+                start = x
+                while x + 1 < target_w and valid[y, x + 1] and labels[y, x + 1] == color_index:
+                    x += 1
+                runs.append([left + start * pixel_step, left + x * pixel_step + pixel_step - 1, top + y * pixel_step])
+                x += 1
+        for start in range(0, len(runs), 150):
+            steps.append({"name": f"Raster {color} {start // 150 + 1:03d}",
+                          "tool": "raster_runs", "color": color,
+                          "runs": runs[start:start + 150]})
+        print(f"Raster {color}: {len(runs)} horizontal spans")
+    if not steps:
+        raise ValueError("No supported palette pixels in reference")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps({"name": f"Raster from {source.name}", "steps": steps,
+        "raster": {"pixel_step": pixel_step, "width": target_w, "height": target_h,
+                   "supported_colors": names}}, indent=2), encoding="utf-8")
+    print(f"Created {output}: {len(steps)} batches; no bucket fills")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fast reference tracing")
     parser.add_argument("image", type=Path)
@@ -534,8 +594,13 @@ def main():
     parser.add_argument("--min-length", type=int, default=2)
     parser.add_argument("--fill-solid-ink", action="store_true", help="Include isolated closed solid ink regions; excludes holes and connected outlines")
     parser.add_argument("--region-map", action="store_true", help="Store recolored connected regions and original RGB in JSON metadata")
+    parser.add_argument("--raster", action="store_true", help="Draw indexed pixel masks as horizontal Paint strokes, without bucket fills")
+    parser.add_argument("--pixel-step", type=int, choices=(1, 2, 3), default=2)
     parser.add_argument("--paint-fills", action="store_true", help="Generate safe fills for calibrated Paint colors before original strokes")
     args = parser.parse_args()
+    if args.raster:
+        raster_drawing(args.image, args.output, args.pixel_step)
+        return
     ReferenceTracingPipeline(args.threshold, args.min_length).run(
         args.image, args.output, fill_solid_ink=args.fill_solid_ink, region_map=args.region_map, paint_fills=args.paint_fills)
 
