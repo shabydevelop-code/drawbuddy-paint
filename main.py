@@ -94,22 +94,22 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             continue
         candidates.append((mapped, pixels))
 
-    # Draw long, uninterrupted contours first. Reject any later gesture
-    # which would revisit a previously drawn pixel, rather than cutting it
-    # into many short pen strokes.
+    # Keep each candidate's full gesture. Minor intersections are normal
+    # in line art; rejecting whole paths at the first shared pixel destroys
+    # the subject. Suppress only nearly redundant paths.
     candidates.sort(key=lambda item: len(item[1]), reverse=True)
     for mapped, pixels in candidates:
-        if any(p in visited_pixels for p in pixels):
+        overlap = sum(p in visited_pixels for p in pixels)
+        # Only discard paths already covered almost completely.
+        if overlap / len(pixels) >= 0.90:
             rejected_overlap += 1
-            duplicate_pixels += sum(p in visited_pixels for p in pixels)
+            duplicate_pixels += overlap
             continue
         visited_pixels.update(pixels)
         plan.append((1, [list(p) for p in mapped]))
     if not plan:
         raise ValueError('No drawable paths after mapping')
-    # Validate the exact planned pen motion before accessing Paint.
-    # Each point of each segment is rasterized, including endpoints and
-    # zero-length dot strokes. Overlap is a hard failure.
+    # Validate planned motion and report natural contour intersections.
     planned_pixels = set()
     overlap_count = 0
     out_of_bounds = 0
@@ -140,24 +140,25 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
               'median_stroke_vertices': sorted(lengths)[len(lengths)//2],
               'unique_pixels': len(planned_pixels),
               'repeated_pixel_visits': overlap_count,
+              'overlaps_allowed_for_natural_contours': True,
               'skipped_source_pixel_visits': duplicate_pixels,
               'out_of_bounds_pixels': out_of_bounds,
               'paint_execution_started': False}
     print('Scene path validation:', json.dumps(report, indent=2))
-    if overlap_count or out_of_bounds:
-        raise RuntimeError('Scene path validation FAILED; Paint drawing blocked')
+    if out_of_bounds:
+        raise RuntimeError('Scene path validation FAILED: out-of-bounds motion')
     if validate_only:
-        print('PASS: planned Paint paths have zero repeated pixel visits.')
+        print('PASS: planned Paint paths stay in bounds; contour intersections are allowed.')
         return
     engine = DrawingEngine(speed=speed)
     # Validate every planned position before touching the Paint canvas.
     for _, points in plan:
         engine.paint.validate_canvas_points(points)
-    print(f'Natural Paint paths: skipped {rejected_short} short and {rejected_overlap} overlapping paths.')
+    print(f'Natural Paint paths: skipped {rejected_short} short and {rejected_overlap} nearly redundant paths.')
     print(f'Scene Engine Paint test: {len(plan)} deduplicated pen paths '
           f'from {len(selected_paths)} source paths; '
           f'canvas={dest_w}x{dest_h}, scale={scale:.4f}')
-    print('This contour-only experiment intentionally omits short/overlapping detail.')
+    print('Contour intersections are retained; nearly redundant paths are omitted.')
     print('Use a NEW blank white maximized Paint canvas. F8 stops drawing.')
     engine.tools.select('pencil')
     engine.colors.select_primary('black')
