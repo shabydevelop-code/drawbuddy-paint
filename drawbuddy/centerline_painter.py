@@ -105,7 +105,28 @@ def build_centerline_drawing(source, max_width=240, max_height=180):
     if not paths:
         raise ValueError('No centerline paths detected')
 
-    # Every colored region boundary is retained unless it coincides with
+    # Draw the outside silhouette first, following the visible nonwhite dog
+    # boundary. This is an ordering pass, not a replacement for interior ink.
+    hsv_foreground = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    foreground = ((np.min(image, axis=2) < 220) |
+                  (hsv_foreground[:, :, 1] > 35)).astype(np.uint8)
+    foreground = cv2.morphologyEx(foreground, cv2.MORPH_CLOSE,
+                                  np.ones((3, 3), np.uint8))
+    silhouettes, _ = cv2.findContours(foreground, cv2.RETR_EXTERNAL,
+                                       cv2.CHAIN_APPROX_NONE)
+    silhouettes = sorted(silhouettes, key=lambda p: -cv2.contourArea(p))
+    outside = []
+    for contour in silhouettes:
+        if len(contour) < 8 or cv2.arcLength(contour, True) < 24:
+            continue
+        pts = [[left + int(p[0][0]), top + int(p[0][1])]
+               for p in contour]
+        pts.append(pts[0])
+        outside.append(pts)
+    # Order remaining centerline strokes by their location: larger structural
+    # lines before smaller facial details. Preserve all source graph paths.
+    paths.sort(key=lambda p: (-len(p), min(pt[1] for pt in p)))
+
     # dark ink. Separate color boundaries from dark line centerlines.
     chroma = ((hsv[:, :, 1] >= 90) & (hsv[:, :, 2] >= 80)).astype(np.uint8)
     contours, _ = cv2.findContours(chroma, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
@@ -131,6 +152,9 @@ def build_centerline_drawing(source, max_width=240, max_height=180):
     for path in colored:
         pts = np.array([[x - left, y - top] for x, y in path], np.int32)
         cv2.polylines(preview, [pts], False, (0, 130, 255), 1)
+    for path in outside:
+        pts = np.array([[x - left, y - top] for x, y in path], np.int32)
+        cv2.polylines(preview, [pts], False, (0, 0, 0), 2)
     for path in paths:
         pts = np.array([[x - left, y - top] for x, y in path], np.int32)
         cv2.polylines(preview, [pts], False, (0, 0, 0), 2)
@@ -141,6 +165,10 @@ def build_centerline_drawing(source, max_width=240, max_height=180):
         raise OSError(f'Could not write {preview_path}')
 
     steps = []
+    if outside:
+        steps.append({'name': 'Outer silhouette first',
+                      'tool': 'brush_paths', 'color': 'black',
+                      'width': 2, 'paths': outside})
     if colored:
         steps.append({'name': 'Color region borders (thin)',
                       'tool': 'brush_paths', 'color': 'orange',
@@ -151,6 +179,7 @@ def build_centerline_drawing(source, max_width=240, max_height=180):
     return {'name': f'Centerline {source.stem}',
             'lineart': {'width': width, 'height': height,
                         'centerline_paths': len(paths),
+                        'outer_silhouette_paths': len(outside),
                         'colored_paths': len(colored),
                         'skeleton_pixels': int(np.count_nonzero(skeleton)),
                         'preview': str(preview_path), 'fill': False},
