@@ -179,8 +179,49 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
                 detail_points.append(detail_points[0])
                 steps.append({"name": f"binary detail {index}", "tool": "stroke",
                               "color": "black", "width": 1, "points": detail_points})
-    return {"name": f"{source.stem}-all-binary-contours",
-            "mode": "binary-all-contours",
+    # Second binary map: preserve dark line art (including eyebrows) that
+    # disappeared when gray fur became black in the primary Otsu mask.
+    # Use the same resized source and coordinate system as the outer contour.
+    dark_ink = np.where(gray < 80, 255, 0).astype(np.uint8)
+    dark_contours, _ = cv2.findContours(dark_ink, cv2.RETR_LIST,
+                                        cv2.CHAIN_APPROX_NONE)
+    # Rasterize the existing pencil paths for overlap rejection. This avoids
+    # redrawing the same contour from the second 0/1 map.
+    existing = np.zeros(ink.shape, dtype=np.uint8)
+    for step in steps:
+        local = np.array([[x - left, y - top] for x, y in step["points"]],
+                         dtype=np.int32).reshape((-1, 1, 2))
+        cv2.polylines(existing, [local], False, 255, 3)
+    added = 0
+    for contour in dark_contours:
+        area = cv2.contourArea(contour)
+        if area < 2 or area > 1000 or len(contour) < 4:
+            continue
+        x, y, w, h = cv2.boundingRect(contour)
+        # Only add compact facial details from the upper part of the image.
+        # Avoid re-tracing large outer edges, body shading, or the collar.
+        if y + h > size[1] * 0.48 or w > size[0] * 0.30 or h > size[1] * 0.22:
+            continue
+        contour_mask = np.zeros(ink.shape, dtype=np.uint8)
+        cv2.polylines(contour_mask, [contour], True, 255, 1)
+        pixels = cv2.countNonZero(contour_mask)
+        if not pixels:
+            continue
+        overlap = cv2.countNonZero(cv2.bitwise_and(contour_mask, existing))
+        if overlap / pixels > 0.35:
+            continue
+        detail = cv2.approxPolyDP(contour, epsilon=0.55, closed=True)
+        detail_points = [[left + int(p[0][0]), top + int(p[0][1])] for p in detail]
+        if len(detail_points) < 3:
+            continue
+        detail_points.append(detail_points[0])
+        steps.append({"name": f"dark 0/1 detail {added + 1}", "tool": "stroke",
+                      "color": "black", "width": 1, "points": detail_points})
+        cv2.polylines(existing, [contour], True, 255, 3)
+        added += 1
+    return {"name": f"{source.stem}-dual-binary-contours",
+            "mode": "binary-dual-contours",
             "binary": {"zero": "white", "one": "black", "width": size[0],
-                       "height": size[1], "outlines": len(steps), "fill_enabled": False},
+                       "height": size[1], "outlines": len(steps), "dark_threshold": 80,
+                       "dark_details_added": added, "fill_enabled": False},
             "steps": steps}
