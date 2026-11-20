@@ -30,3 +30,13 @@ These builders retain their required geometry-validation modules. Do not delete 
 - `output/dog.png`: latest published Paint screenshot.
 
 Experimental diagnostic scripts and diagnostic images have been removed from the current branch. Git history remains available.
+
+## Experimental binary 0/1 mode
+
+Start with a new blank white Paint canvas. This mode thresholds the original image into a pixel mask (0=white, 1=black), compresses consecutive black pixels into horizontal runs, and draws those runs with Paint's pencil. It does not call the vector tracer or use guessed contours. It is black-and-white only, limited to 240x180 pixels for practical Paint mouse speed, and can take a long time on dense images. It is not yet a full-color or performance-optimized raster engine.
+
+```powershell
+python main.py --binary-source assets/dog-reference.png --speed 2
+```
+
+Optional: `--binary-threshold 110` controls the dark-pixel cutoff; `--no-publish-result` disables GitHub result upload. The original `python main.py dog-vector --speed 2` remains available and unchanged.
