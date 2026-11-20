@@ -47,6 +47,46 @@ class InkMask:
         return (np.max(image, axis=2) < self.threshold).astype(np.uint8)
 
 
+class ColorBoundaryExtractor:
+    """Find visible boundaries between differently colored interior regions.
+
+    Uses color-channel edges rather than grayscale darkness, rejects edges
+    adjacent to existing black ink, and filters tiny isolated fragments.
+    It does not infer invisible or deliberately open boundaries.
+    """
+
+    def __init__(self, min_area=18, ink_clearance=4):
+        self.min_area = min_area
+        self.ink_clearance = ink_clearance
+
+    def extract(self, filename, ink_mask):
+        image = cv2.imread(str(filename), cv2.IMREAD_COLOR)
+        if image is None:
+            raise FileNotFoundError(f"Cannot read reference: {filename}")
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        smooth = cv2.GaussianBlur(lab, (5, 5), 0)
+        # Chromatic edges reveal orange/cream and brown/orange transitions
+        # that the black-only line extractor cannot see.
+        channels = (smooth[:, :, 1], smooth[:, :, 2])
+        edges = np.zeros(ink_mask.shape, dtype=np.uint8)
+        for channel in channels:
+            edges = cv2.bitwise_or(edges, cv2.Canny(channel, 22, 55))
+        # Avoid duplicating existing black outlines or their anti-aliased rims.
+        radius = 2 * self.ink_clearance + 1
+        excluded = cv2.dilate(ink_mask.astype(np.uint8),
+                              cv2.getStructuringElement(
+                                  cv2.MORPH_ELLIPSE, (radius, radius)))
+        edges[excluded > 0] = 0
+        # Remove isolated noise, but retain genuine open interior borders.
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(
+            (edges > 0).astype(np.uint8), connectivity=8)
+        clean = np.zeros_like(edges)
+        for label in range(1, count):
+            if stats[label, cv2.CC_STAT_AREA] >= self.min_area:
+                clean[labels == label] = 1
+        return clean
+
+
 class ZhangSuenThinner:
     """Reduce thick ink to one-pixel centerlines without extra dependencies."""
 
@@ -153,6 +193,7 @@ class ReferenceTracingPipeline:
 
     def __init__(self, threshold=95, min_length=2):
         self.ink = InkMask(threshold)
+        self.color_boundaries = ColorBoundaryExtractor()
         self.thinner = ZhangSuenThinner()
         self.tracer = SkeletonPathTracer(min_length)
         self.mapper = PaintCanvasMapper()
@@ -160,13 +201,18 @@ class ReferenceTracingPipeline:
     def run(self, source, output):
         mask = self.ink.from_image(source)
         paths = self.tracer.trace(self.thinner.thin(mask))
+        color_mask = self.color_boundaries.extract(source, mask)
+        color_paths = self.tracer.trace(self.thinner.thin(color_mask))
         if not paths:
             raise ValueError("No ink paths found")
-        mapped = self.mapper.map(paths)
+        # Map all paths together so the original and color edges align.
+        combined = paths + color_paths
+        mapped = self.mapper.map(combined)
         steps = [
-            {"name": f"Line {i:03d}", "tool": "stroke", "color": "black",
-             "smooth": False, "width": 1, "points": points}
-            for i, points in enumerate(mapped, 1)
+            {"name": f"{'Ink' if i < len(paths) else 'Color boundary'} {i + 1:03d}",
+             "tool": "stroke", "color": "black", "smooth": False,
+             "width": 1, "points": points}
+            for i, points in enumerate(mapped)
             if len(set(map(tuple, points))) >= 2
         ]
         if not steps:
@@ -175,7 +221,7 @@ class ReferenceTracingPipeline:
         output.write_text(json.dumps({
             "name": "Dog traced from reference", "steps": steps
         }, indent=2), encoding="utf-8")
-        print(f"Created {output}: {len(steps)} strokes, no corrective processing")
+        print(f"Created {output}: {len(paths)} ink paths + {len(color_paths)} color boundary paths; {len(steps)} drawable strokes")
 
 
 def main():
