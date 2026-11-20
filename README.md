@@ -40,3 +40,7 @@ python main.py --binary-source assets/dog-reference.png --speed 2
 ```
 
 Optional: `--binary-threshold 110` controls the dark-pixel cutoff; `--no-publish-result` disables GitHub result upload. The original `python main.py dog-vector --speed 2` remains available and unchanged.
+
+## BinaryPainter V2 (experimental)
+
+`python main.py --binary-source assets/dog-reference.png --speed 2` now uses larger (up to 500x350) connected-region contour + bucket fills, including white nested holes. Legacy line-by-line printing is available with `--binary-runs`. Small/thin regions may be skipped. White palette coordinate is based on the existing Paint ribbon layout and must be verified on the target machine. Use a fresh blank white Paint canvas. This is experimental and not yet validated on the user's Paint installation.
