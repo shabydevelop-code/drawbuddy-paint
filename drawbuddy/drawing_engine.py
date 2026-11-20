@@ -148,6 +148,37 @@ class DrawingEngine:
             raise RuntimeError(f'{step["name"]}: fill interior too small')
         return True
 
+    def verify_pencil_color(self, color):
+        """Verify actual Paint canvas ink, not the unreliable ribbon preview.
+
+        The probe is drawn outside the mapped artwork and undone immediately.
+        Never continue with a mismatched swatch.
+        """
+        probe_x, probe_y = 860, 555
+        expected = RGB[color]
+        for attempt in range(2):
+            before = self.canvas.sample(probe_x, probe_y)
+            if not self.color_matches(before, (255, 255, 255), tolerance=12):
+                raise RuntimeError("Color probe area is not blank; use a new white Paint canvas")
+            self.canvas.stroke([[probe_x, probe_y], [probe_x+3, probe_y]])
+            try:
+                actual = self.canvas.sample(probe_x+1, probe_y)
+            finally:
+                self.paint.press('ctrl+z')
+            restored = self.canvas.sample(probe_x+1, probe_y)
+            if not self.color_matches(restored, (255, 255, 255), tolerance=12):
+                raise RuntimeError("Color probe undo did not restore the white canvas")
+            if self.color_matches(actual, expected, tolerance=12):
+                print(f"  VERIFIED pencil color={color} RGB={actual}")
+                return
+            print(f"  COLOR PROBE mismatch: requested={expected}, drawn={actual}")
+            self.colors.current_primary = None
+            if attempt == 0:
+                self.colors.select_primary(color)
+        raise RuntimeError(
+            f"Paint is not drawing requested color {color} {expected}; "
+            "stopped before drawing the region")
+
     def execute(self, drawing, diagnostic_path):
         steps = drawing['steps']
         print(f'DrawBuddy: {drawing.get("name", "drawing")} ({len(steps)} steps).')
@@ -161,6 +192,8 @@ class DrawingEngine:
                     print(f'\n{index}/{len(steps)} {name}: {tool}, outline={step["color"]}')
                     self.tools.select('pencil')
                     self.colors.select_primary(step['color'])
+                    if tool == 'closed_path':
+                        self.verify_pencil_color(step['color'])
                     points = list(step['points'])
                     if tool == 'closed_path' and points[-1] != points[0]:
                         points.append(points[0])
