@@ -77,6 +77,47 @@ def export_visual_layers(scene, output):
     save('ink-centerlines.png', stroke_layer)
     save('layered-preview.png', combined)
 
+    # Compare actual source ink with reconstructed stroke ink at the SAME
+    # resolution used by Paint. This exposes losses hidden by source-scale IoU.
+    rebuilt_bgr = cv2.imread(str(out / 'stroke-reconstruction.png'))
+    if rebuilt_bgr is None or rebuilt_bgr.shape[:2] != ink.shape:
+        raise RuntimeError('Stroke reconstruction preview is missing or invalid')
+    rebuilt_ink = np.uint8(np.all(rebuilt_bgr < 128, axis=2))
+    target_w, target_h = 360, 270
+    factor = min(target_w / ink.shape[1], target_h / ink.shape[0], 1.0)
+    shape = (max(1, round(ink.shape[1] * factor)),
+             max(1, round(ink.shape[0] * factor)))
+    source_small = cv2.resize(np.uint8(ink > 0), shape,
+                              interpolation=cv2.INTER_AREA) > 0.20
+    rebuilt_small = cv2.resize(rebuilt_ink, shape,
+                               interpolation=cv2.INTER_AREA) > 0.20
+    lost = source_small & ~rebuilt_small
+    added = rebuilt_small & ~source_small
+    overlay = np.full((shape[1], shape[0], 3), 255, np.uint8)
+    overlay[source_small & rebuilt_small] = (30, 30, 30)
+    overlay[lost] = (0, 0, 255)  # red: source ink not reconstructed
+    overlay[added] = (255, 0, 0)  # blue: reconstructed outside source
+    cv2.imwrite(str(out / 'stroke-difference.png'), overlay)
+    missing_count, missing_labels, missing_stats, _ = (
+        cv2.connectedComponentsWithStats(np.uint8(lost), connectivity=8))
+    missing_regions = []
+    for i in range(1, missing_count):
+        x, y, w, h, area = map(int, missing_stats[i])
+        if area >= 2:
+            missing_regions.append({'x': x, 'y': y, 'width': w,
+                                    'height': h, 'pixels': area})
+    missing_regions.sort(key=lambda item: -item['pixels'])
+    target_fidelity = {
+        'resolution': list(shape),
+        'source_ink_pixels': int(np.count_nonzero(source_small)),
+        'reconstructed_ink_pixels': int(np.count_nonzero(rebuilt_small)),
+        'missing_ink_pixels': int(np.count_nonzero(lost)),
+        'extra_ink_pixels': int(np.count_nonzero(added)),
+        'iou': round(float(np.count_nonzero(source_small & rebuilt_small)) /
+                     max(1, np.count_nonzero(source_small | rebuilt_small)), 6),
+        'largest_missing_regions': missing_regions[:20],
+        'note': 'Offline reconstructed strokes at Paint scale, not a Paint screenshot',
+    }
     # Mask-level reconstruction validation, not vector or Paint validation.
     reconstructed = color_layer.copy()
     reconstructed[ink != 0] = (20, 20, 20)
@@ -99,6 +140,7 @@ def export_visual_layers(scene, output):
         'ink_centerlines_are_diagnostic_only': True,
         'vector_strokes_validated': False,
         'stroke_reconstruction': stroke_report,
+        'paint_scale_stroke_fidelity': target_fidelity,
         'paint_ready': False,
     }
     (out / 'layer-validation.json').write_text(
