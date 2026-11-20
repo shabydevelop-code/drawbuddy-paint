@@ -62,12 +62,14 @@ def build_binary_drawing(source, max_width=240, max_height=180, threshold=None):
     }
 
 
-def build_color_raster_drawing(source, max_width=240, max_height=180, colors=8):
-    """Quantize RGB source into color-specific 0/1 maps and horizontal runs.
+def build_color_raster_drawing(source, max_width=240, max_height=180, colors=4):
+    """Print pixels with the four already calibrated Paint palette swatches.
 
-    White is the untouched Paint canvas. Color selection is delegated to the
-    RGB-aware drawing engine; no contours, geometry guessing, or bucket fills.
+    Each palette color gets a separate 0/1 mask and horizontal raster runs.
+    No custom RGB dialogs, vector tracing, or bucket fills.
     """
+    from .components import RGB
+
     source = Path(source)
     image = cv2.imread(str(source), cv2.IMREAD_COLOR)
     if image is None:
@@ -77,22 +79,13 @@ def build_color_raster_drawing(source, max_width=240, max_height=180, colors=8):
     size = (max(1, round(width * scale)), max(1, round(height * scale)))
     image = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
     rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    # Quantize only non-white pixels. The near-white background stays blank.
-    pixels = rgb.reshape(-1, 3)
-    foreground = np.min(pixels, axis=1) < 245
-    data = pixels[foreground].astype(np.float32)
-    if not len(data):
-        raise ValueError("No non-white pixels in source")
-    k = min(colors, len(data))
-    cv2.setRNGSeed(42)
-    _, labels, centers = cv2.kmeans(
-        data, k, None,
-        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 35, 0.2),
-        3, cv2.KMEANS_PP_CENTERS)
-    centers = np.clip(np.rint(centers), 0, 255).astype(np.uint8)
-    mapped = np.full((len(pixels), 3), 255, np.uint8)
-    mapped[foreground] = centers[labels[:, 0]]
-    mapped = mapped.reshape(size[1], size[0], 3)
+    # Only use known, calibrated ribbon swatches.
+    palette_names = ("black", "brown", "orange", "white")
+    palette = np.array([RGB[name] for name in palette_names], dtype=np.int32)
+    pixels = rgb.reshape(-1, 3).astype(np.int32)
+    nearest = np.argmin(np.sum((pixels[:, None, :] - palette[None, :, :]) ** 2,
+                               axis=2), axis=1).reshape(size[1], size[0])
+    mapped = palette[nearest].astype(np.uint8)
     folder = Path("output")
     folder.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(folder / "raster-source-color.png"), image)
@@ -101,8 +94,10 @@ def build_color_raster_drawing(source, max_width=240, max_height=180, colors=8):
     left = 310 + (max_width - size[0]) // 2
     top = 155 + (max_height - size[1]) // 2
     steps = []
-    for center in centers:
-        binary = np.all(mapped == center, axis=2).astype(np.uint8)
+    for index, name in enumerate(palette_names):
+        if name == "white":
+            continue  # Paint starts with a blank white canvas.
+        binary = (nearest == index).astype(np.uint8)
         runs = []
         for y, row in enumerate(binary):
             padded = np.pad(row.astype(np.int8), (1, 1))
@@ -111,12 +106,14 @@ def build_color_raster_drawing(source, max_width=240, max_height=180, colors=8):
             runs.extend([left + int(a), left + int(b), top + y]
                         for a, b in zip(starts, ends))
         if runs:
-            steps.append({"name": f"RGB {tuple(int(v) for v in center)}",
-                          "tool": "raster_runs", "color_rgb": [int(v) for v in center],
-                          "runs": runs})
-    return {"name": f"{source.stem}-color-raster", "mode": "color-raster",
-            "color": {"palette_size": len(steps), "width": size[0], "height": size[1],
-                      "quantized_preview": "output/raster-color-quantized.png"},
+            steps.append({"name": f"palette {name}", "tool": "raster_runs",
+                          "color": name, "runs": runs})
+    if not steps:
+        raise ValueError("No non-white pixels after palette mapping")
+    return {"name": f"{source.stem}-palette-raster", "mode": "palette-raster",
+            "color": {"palette": list(palette_names), "width": size[0],
+                      "height": size[1], "quantized_preview":
+                      "output/raster-color-quantized.png"},
             "steps": steps}
 
 
