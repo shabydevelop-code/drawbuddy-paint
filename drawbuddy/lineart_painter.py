@@ -36,25 +36,30 @@ def build_lineart_drawing(source, max_width=240, max_height=180):
         length = cv2.arcLength(contour, closed)
         if length < 5:
             continue
-        # Do not redraw the same black contour when it is present in both
-        # the edge map and the dark-ink map.
-        contour_mask = np.zeros_like(covered)
-        cv2.polylines(contour_mask, [contour], closed, 255, 1)
-        count = cv2.countNonZero(contour_mask)
-        if not count:
-            continue
-        overlap = cv2.countNonZero(cv2.bitwise_and(contour_mask, covered))
-        if overlap / count > 0.55:
-            continue
-        # Retain the actual pixel-by-pixel geometry; simplification previously
-        # removed small but important leg and face segments.
-        coords = [[left + int(p[0][0]), top + int(p[0][1])] for p in contour]
-        if closed and len(coords) >= 3:
-            coords.append(coords[0])
-        if len(coords) < 2:
-            continue
-        paths.append(coords)
-        cv2.polylines(covered, [contour], closed, 255, 1)
+        # Suppress only EXACT previously drawn pixels. Do not thin,
+        # dilate, or remove nearby parallel contours: those can be real
+        # eye, mouth and leg details.
+        points = [(int(p[0][0]), int(p[0][1])) for p in contour]
+        if closed:
+            points.append(points[0])
+        # Stage candidate runs before changing coverage so rejected short
+        # fragments do not erase legitimate paths from later contours.
+        runs = []
+        run = []
+        for x, y in points:
+            if covered[y, x]:
+                if len(run) >= 2:
+                    runs.append(run)
+                run = []
+            else:
+                if not run or run[-1] != (x, y):
+                    run.append((x, y))
+        if len(run) >= 2:
+            runs.append(run)
+        for run in runs:
+            paths.append([[left + x, top + y] for x, y in run])
+            local = np.array(run, dtype=np.int32).reshape((-1, 1, 2))
+            cv2.polylines(covered, [local], False, 255, 1)
     # Colored region boundaries are outlines too. Extract them from source
     # chroma (not the green annotation in the user's illustrative screenshot).
     # Never fill a region: only draw its actual border.
