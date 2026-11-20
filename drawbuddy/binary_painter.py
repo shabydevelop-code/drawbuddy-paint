@@ -135,13 +135,9 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
         if not 0 <= threshold <= 255:
             raise ValueError("threshold must be 0..255")
         ink = np.where(gray < threshold, 255, 0).astype(np.uint8)
-    # Outer silhouette only: close small gaps in the 0/1 ink, then select
-    # the largest external contour. Never trace inner contours or skeletons.
-    # The morphology operates on a temporary analysis mask; the drawing
-    # itself remains a single unfilled pencil path.
-    joined = cv2.morphologyEx(ink, cv2.MORPH_CLOSE,
-                             cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
-    contours, _ = cv2.findContours(joined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    # Use the original thresholded 0/1 mask without gap closing.
+    # Only the largest external connected contour is drawn.
+    contours, _ = cv2.findContours(ink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
         raise ValueError("No exterior contour found in binary image")
     contour = max(contours, key=cv2.contourArea)
