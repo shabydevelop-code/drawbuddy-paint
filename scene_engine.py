@@ -164,10 +164,11 @@ def main():
     vector_metrics, vector_difference = validate_vector_geometry(scene, runs)
     cv2.imwrite(str(output / 'vector-difference.png'), vector_difference)
     # Avoid enormous JSON arrays: save the exact pixel labels separately.
-    labels = np.asarray(scene.pop('labels'), np.uint8)
+    labels = np.asarray(scene['labels'], np.uint8)
     np.savez_compressed(output / 'ownership.npz', labels=labels,
                         palette=np.asarray(scene['palette'], np.uint8))
-    (output / 'scene.json').write_text(json.dumps(scene, indent=2), encoding='utf-8')
+    scene_metadata = {key: value for key, value in scene.items() if key != 'labels'}
+    (output / 'scene.json').write_text(json.dumps(scene_metadata, indent=2), encoding='utf-8')
     report = {'source': str(args.source), 'size': [scene['width'], scene['height']],
               'colors': args.colors, 'shapes': len(scene['shapes']),
               'mean_absolute_error': round(float(delta.mean()), 3),
