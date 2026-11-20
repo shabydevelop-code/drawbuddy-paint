@@ -60,6 +60,7 @@ def main():
         parser.error('drawing speed must be greater than 0 and at most 100')
     engine = DrawingEngine(speed=float(speed))
     engine.execute(drawing, root / 'paint-diagnostic.png')
+    engine.paint.refresh_display()
     if args.binary_source and not args.no_compare:
         # Compare the actual pixels against the resized source, not the
         # quantized palette preview. The difference includes palette loss.
