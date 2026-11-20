@@ -70,72 +70,78 @@ def render_scene(scene):
     return cv2.cvtColor(palette[labels], cv2.COLOR_RGB2BGR)
 
 
-def validate_vector_geometry(scene):
-    """Rasterize actual shape rings and compare to exact color ownership.
+def pixel_cell_geometry(scene):
+    """Exact nonoverlapping pixel-cell rectangles, merged into horizontal runs.
 
-    Reports vector coverage separately from palette fidelity. No inference
-    from a pixel-label render is counted as vector success.
+    Coordinates describe cell edges, not OpenCV contour pixel centers.
+    Each pixel belongs to one and only one palette color.
     """
     labels = np.asarray(scene['labels'], dtype=np.int32)
     h, w = labels.shape
-    vector_masks = [np.zeros((h, w), np.uint8)
-                    for _ in scene['palette']]
-    for shape in scene['shapes']:
-        rings = shape['rings']
-        if not rings:
-            continue
-        mask = np.zeros((h, w), np.uint8)
-        outer = np.asarray(rings[0], np.int32)
-        if len(outer) < 3:
-            continue
-        cv2.fillPoly(mask, [outer], 255)
-        for hole in rings[1:]:
-            hole = np.asarray(hole, np.int32)
-            if len(hole) >= 3:
-                cv2.fillPoly(mask, [hole], 0)
-        vector_masks[shape['palette_index']] |= mask
-    # Count ambiguous overlaps as failures rather than hiding them via
-    # an arbitrary draw order.
-    votes = np.stack([(m != 0) for m in vector_masks], axis=0)
-    coverage = votes.sum(axis=0)
-    predicted = votes.argmax(axis=0)
-    correct = (coverage == 1) & (predicted == labels)
-    accuracy = float(correct.mean())
+    runs = []
+    for y in range(h):
+        row = labels[y]
+        starts = np.r_[0, np.flatnonzero(row[1:] != row[:-1]) + 1]
+        ends = np.r_[starts[1:], w]
+        for x0, x1 in zip(starts, ends):
+            runs.append((int(x0), int(y), int(x1 - x0), int(row[x0])))
+    return runs
+
+
+def validate_vector_geometry(scene, runs):
+    """Validate the actual SVG rectangle geometry, not a label-map render."""
+    labels = np.asarray(scene['labels'], np.int32)
+    h, w = labels.shape
+    reconstructed = np.full((h, w), -1, np.int32)
+    coverage = np.zeros((h, w), np.uint16)
+    for x, y, length, color in runs:
+        if not (0 <= x < w and 0 <= y < h and
+                0 < length <= w - x and 0 <= color < len(scene['palette'])):
+            raise ValueError('Invalid vector cell geometry')
+        coverage[y, x:x + length] += 1
+        reconstructed[y, x:x + length] = color
+    correct = (coverage == 1) & (reconstructed == labels)
     missing = int(np.count_nonzero(coverage == 0))
     overlaps = int(np.count_nonzero(coverage > 1))
-    per_color = []
-    for index in range(len(vector_masks)):
-        actual = labels == index
-        proposed = votes[index]
-        union = np.count_nonzero(actual | proposed)
-        intersection = np.count_nonzero(actual & proposed)
-        per_color.append({'index': index,
-                          'iou': round(intersection / union, 5) if union else 1.0})
+    mismatch = int(np.count_nonzero(~correct))
     diagnostic = np.full((h, w, 3), 255, np.uint8)
     diagnostic[(coverage == 1) & ~correct] = (0, 165, 255)
     diagnostic[coverage == 0] = (0, 0, 255)
     diagnostic[coverage > 1] = (255, 0, 255)
-    return {'exact_pixel_coverage': round(accuracy, 6),
+    return {'exact_pixel_coverage': round(float(correct.mean()), 6),
             'uncovered_pixels': missing, 'overlap_pixels': overlaps,
-            'per_color': per_color}, diagnostic
+            'mismatched_pixels': mismatch,
+            'geometry_type': 'exact_pixel_cells',
+            'paint_ready': False}, diagnostic
 
 
-def svg_scene(scene, output):
-    # SVG is an inspectable vector proposal; the label map is authoritative.
-    from xml.sax.saxutils import escape
+def svg_scene(scene, runs, output):
+    """Emit gap-free SVG from exact pixel-cell edges.
+
+    SVG is intentionally unsmoothed. Smooth curves will be a separate,
+    explicitly measured approximation rather than silently losing fidelity.
+    """
     w, h = scene['width'], scene['height']
-    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">']
-    for shape in sorted(scene['shapes'], key=lambda s: -s['area']):
-        r, g, b = shape['color']
-        rings = []
-        for ring in shape['rings']:
-            if len(ring) < 3:
-                continue
-            rings.append('M ' + ' L '.join(f'{x} {y}' for x, y in ring) + ' Z')
-        if rings:
-            parts.append(f'<path d="{" ".join(rings)}" fill="#{r:02x}{g:02x}{b:02x}" fill-rule="evenodd"/>')
+    palette = scene['palette']
+    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" shape-rendering="crispEdges">']
+    # Adjacent runs tile the canvas exactly; no black borders are invented.
+    for x, y, length, color in runs:
+        r, g, b = palette[color]
+        parts.append(f'<rect x="{x}" y="{y}" width="{length}" height="1" fill="#{r:02x}{g:02x}{b:02x}"/>')
     parts.append('</svg>')
-    output.write_text('\n'.join(parts), encoding='utf-8')
+    output.write_text('\\n'.join(parts), encoding='utf-8')
+
+
+def shared_boundary_report(scene):
+    """Count each inter-color pixel edge once, including the canvas perimeter."""
+    labels = np.asarray(scene['labels'], np.int32)
+    h, w = labels.shape
+    horizontal = int(np.count_nonzero(labels[1:, :] != labels[:-1, :]))
+    vertical = int(np.count_nonzero(labels[:, 1:] != labels[:, :-1]))
+    return {'internal_unique_edges': horizontal + vertical,
+            'canvas_perimeter_edges': 2 * (w + h),
+            'boundary_coordinate_system': 'integer_pixel_cell_edges'}
+
 
 
 def main():
@@ -153,8 +159,9 @@ def main():
     cv2.imwrite(str(output / 'render.png'), render)
     delta = cv2.absdiff(source, render)
     cv2.imwrite(str(output / 'difference.png'), delta)
-    svg_scene(scene, output / 'scene.svg')
-    vector_metrics, vector_difference = validate_vector_geometry(scene)
+    runs = pixel_cell_geometry(scene)
+    svg_scene(scene, runs, output / 'scene.svg')
+    vector_metrics, vector_difference = validate_vector_geometry(scene, runs)
     cv2.imwrite(str(output / 'vector-difference.png'), vector_difference)
     # Avoid enormous JSON arrays: save the exact pixel labels separately.
     labels = np.asarray(scene.pop('labels'), np.uint8)
@@ -166,8 +173,10 @@ def main():
               'mean_absolute_error': round(float(delta.mean()), 3),
               'max_channel_error': int(delta.max()),
               'vector_geometry': vector_metrics,
+              'shared_boundary_network': shared_boundary_report(scene),
+              'vector_runs': len(runs),
               'paint_ready': False,
-              'note': 'Raster color fidelity and contour geometry are measured independently; Paint execution is not yet validated.'}
+              'note': 'SVG is exact pixel-cell geometry, not yet smoothed into drawable curves. Paint execution is disabled.'}
     (output / 'validation.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps(report, indent=2))
     print('Files:', output)
