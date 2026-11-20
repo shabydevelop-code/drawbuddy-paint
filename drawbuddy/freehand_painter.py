@@ -19,9 +19,9 @@ def build_freehand_drawing(source, max_width=240, max_height=180):
     scale = min(max_width / width, max_height / height, 1.0)
     width, height = max(1, round(width * scale)), max(1, round(height * scale))
     image = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
-    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.int16)
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.int32)
     names = ('brown', 'orange', 'black', 'white')
-    palette = np.array([RGB[n] for n in names], dtype=np.int16)
+    palette = np.array([RGB[n] for n in names], dtype=np.int32)
     labels = np.argmin(np.sum((rgb[:, :, None, :] - palette[None, None, :, :]) ** 2,
                                   axis=3, dtype=np.int32), axis=2)
     left = 310 + (max_width - width) // 2
