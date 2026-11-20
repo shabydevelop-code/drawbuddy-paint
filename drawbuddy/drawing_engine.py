@@ -227,6 +227,11 @@ class DrawingEngine:
                     self.tools.select('pencil')
                     self.colors.select_primary(step['color'])
                     self.stroke_size.select(2)
+                    if step['color'] == 'white':
+                        # Verify the real ink on the canvas, not just ribbon state.
+                        # This catches a miscalibrated white swatch before any
+                        # white contour or bucket can damage the drawing.
+                        self.verify_pencil_color('white')
                     points = step['points'] + [step['points'][0]]
                     self.paint.validate_canvas_points(points)
                     self.canvas.stroke(points)
@@ -246,6 +251,9 @@ class DrawingEngine:
                         print(f'  SKIP bucket: seed already {step["color"]}')
                         continue
                     self.tools.select('bucket')
+                    # The Paint ribbon may reset Color 1 when tools change.
+                    # Force a real swatch click before each bucket operation.
+                    self.colors.current_primary = None
                     self.colors.select_primary(step['color'])
                     self.canvas.fill(x, y)
                     actual = self.canvas.sample(x, y)
