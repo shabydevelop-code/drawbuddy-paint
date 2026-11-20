@@ -152,41 +152,40 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     duplicate_pixels = 0
     if not plan:
         raise ValueError('No drawable paths after mapping')
-    # Schedule real contours before tiny details. Within each Paint size,
-    # choose the nearest available stroke endpoint, reversing open strokes
-    # when it saves travel. This only changes order, never geometry.
-    from collections import defaultdict
-    buckets = defaultdict(list)
+    # Visual-first schedule: outline-like long gestures first, medium
+    # contours next, isolated short details last. Do not sort by pencil
+    # width: that previously brought hundreds of small size-1 dots forward.
+    # This is a geometric heuristic, not semantic dog-part recognition.
+    phases = [[], [], []]
     for size, points in plan:
-        buckets[size].append(points)
+        distinct = len(set(map(tuple, points)))
+        phase = 0 if distinct >= 12 else (1 if distinct >= 5 else 2)
+        phases[phase].append((size, points))
+    phase_counts = [len(group) for group in phases]
     ordered = []
     cursor = None
-    for size in sorted(buckets):
-        remaining_paths = buckets[size]
-        # Long contours first; isolated dots and two-point details last.
-        long_paths = [p for p in remaining_paths if len(set(map(tuple, p))) >= 5]
-        short_paths = [p for p in remaining_paths if len(set(map(tuple, p))) < 5]
-        for group in (long_paths, short_paths):
-            while group:
-                if cursor is None:
-                    idx = max(range(len(group)), key=lambda i: len(group[i]))
-                    reverse = False
-                else:
-                    def travel(i):
-                        p = group[i]
-                        forward = (p[0][0]-cursor[0])**2 + (p[0][1]-cursor[1])**2
-                        backward = (p[-1][0]-cursor[0])**2 + (p[-1][1]-cursor[1])**2
-                        return (min(forward, backward), -len(p), i)
-                    idx = min(range(len(group)), key=travel)
-                    p = group[idx]
-                    forward = (p[0][0]-cursor[0])**2 + (p[0][1]-cursor[1])**2
-                    backward = (p[-1][0]-cursor[0])**2 + (p[-1][1]-cursor[1])**2
-                    reverse = backward < forward
-                points = group.pop(idx)
-                if reverse:
-                    points = points[::-1]
-                ordered.append((size, points))
-                cursor = points[-1]
+    for phase_index, group in enumerate(phases):
+        while group:
+            if cursor is None:
+                idx = max(range(len(group)), key=lambda i: len(group[i][1]))
+                reverse = False
+            else:
+                def travel(i):
+                    points = group[i][1]
+                    forward = (points[0][0]-cursor[0])**2 + (points[0][1]-cursor[1])**2
+                    backward = (points[-1][0]-cursor[0])**2 + (points[-1][1]-cursor[1])**2
+                    # Prefer a substantial line when travel distances are similar.
+                    return (min(forward, backward) - min(len(points), 20), -len(points), i)
+                idx = min(range(len(group)), key=travel)
+                points = group[idx][1]
+                forward = (points[0][0]-cursor[0])**2 + (points[0][1]-cursor[1])**2
+                backward = (points[-1][0]-cursor[0])**2 + (points[-1][1]-cursor[1])**2
+                reverse = backward < forward
+            size, points = group.pop(idx)
+            if reverse:
+                points = points[::-1]
+            ordered.append((size, points))
+            cursor = points[-1]
     plan = ordered
     # Validate planned motion and report natural contour intersections.
     planned_pixels = set()
@@ -214,6 +213,9 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     width_counts = {str(size): sum(level == size for level, _ in plan) for size in (1, 2, 3, 4)}
     report = {'source_paths': len(selected_paths),
               'planned_strokes': len(plan),
+              'drawing_phases': {'long_contours': phase_counts[0],
+                                 'medium_contours': phase_counts[1],
+                                 'small_details_last': phase_counts[2]},
               'rejected_short_paths': rejected_short,
               'rejected_overlapping_paths': rejected_overlap,
               'minimum_stroke_pixels': min_stroke_pixels,
@@ -257,7 +259,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     engine.tools.current = 'pencil'
     time.sleep(0.6)
     print('Paint Pencil reselected after color/size initialization.')
-    # The validated plan is already grouped by size and travel-optimized.
+    # The validated plan is ordered by visual phases; do not regroup by size.
     try:
         for index, (size, points) in enumerate(plan, 1):
             from drawbuddy.controller import check_cancel
