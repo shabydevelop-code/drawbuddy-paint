@@ -12,20 +12,30 @@ import numpy as np
 
 def build_binary_drawing(source, max_width=240, max_height=180, threshold=None):
     source = Path(source)
-    image = cv2.imread(str(source), cv2.IMREAD_GRAYSCALE)
+    image = cv2.imread(str(source), cv2.IMREAD_COLOR)
     if image is None:
         raise FileNotFoundError(f"Cannot read image: {source}")
-    height, width = image.shape
+    height, width = image.shape[:2]
     scale = min(max_width / width, max_height / height, 1.0)
     new_width = max(1, round(width * scale))
     new_height = max(1, round(height * scale))
-    gray = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+    # Retain the resized RGB pixels for inspection and future color printing.
+    # The current Paint pass deliberately uses only a 0/1 black-ink mask.
+    resized_bgr = cv2.resize(image, (new_width, new_height),
+                             interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2GRAY)
     if threshold is None:
         _, mask = cv2.threshold(gray, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     else:
         if not 0 <= threshold <= 255:
             raise ValueError("threshold must be between 0 and 255")
         mask = (gray < threshold).astype(np.uint8)
+    # Persist the exact resized color input and 0/1 mask for visual comparison.
+    # No automatic color reproduction is claimed at this stage.
+    diagnostics = Path("output")
+    diagnostics.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(diagnostics / "raster-source-color.png"), resized_bgr)
+    cv2.imwrite(str(diagnostics / "raster-mask-01.png"), (1 - mask) * 255)
     # White Paint background is assumed. Each 1 is an actual source ink pixel.
     left = 310 + (max_width - new_width) // 2
     top = 155 + (max_height - new_height) // 2
@@ -43,7 +53,10 @@ def build_binary_drawing(source, max_width=240, max_height=180, threshold=None):
         "mode": "binary-01",
         "binary": {"zero": "white", "one": "black",
                    "width": new_width, "height": new_height,
-                   "ink_pixels": int(mask.sum()), "runs": len(runs)},
+                   "ink_pixels": int(mask.sum()), "runs": len(runs),
+                   "color_reference": "output/raster-source-color.png",
+                   "binary_reference": "output/raster-mask-01.png",
+                   "paint_colors": "black on white (color printing not yet implemented)"},
         "steps": [{"name": "binary black ink", "tool": "raster_runs",
                    "color": "black", "runs": runs}],
     }
