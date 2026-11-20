@@ -1,0 +1,1669 @@
+{
+  "name": "Dog outline study - clean visible contours only, no fills",
+  "steps": [
+    {
+      "name": "Outer silhouette left ear",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          545,
+          130
+        ],
+        [
+          523,
+          116
+        ],
+        [
+          497,
+          113
+        ],
+        [
+          473,
+          125
+        ],
+        [
+          455,
+          145
+        ],
+        [
+          442,
+          171
+        ],
+        [
+          430,
+          190
+        ],
+        [
+          419,
+          218
+        ],
+        [
+          420,
+          249
+        ],
+        [
+          433,
+          272
+        ],
+        [
+          453,
+          281
+        ],
+        [
+          473,
+          271
+        ],
+        [
+          491,
+          247
+        ],
+        [
+          504,
+          218
+        ],
+        [
+          511,
+          191
+        ]
+      ]
+    },
+    {
+      "name": "Outer silhouette head crown",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          507,
+          155
+        ],
+        [
+          522,
+          126
+        ],
+        [
+          547,
+          104
+        ],
+        [
+          579,
+          91
+        ],
+        [
+          615,
+          89
+        ],
+        [
+          644,
+          94
+        ],
+        [
+          667,
+          108
+        ],
+        [
+          683,
+          123
+        ]
+      ]
+    },
+    {
+      "name": "Outer silhouette right ear",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          681,
+          132
+        ],
+        [
+          700,
+          107
+        ],
+        [
+          723,
+          96
+        ],
+        [
+          747,
+          101
+        ],
+        [
+          773,
+          119
+        ],
+        [
+          794,
+          144
+        ],
+        [
+          807,
+          174
+        ],
+        [
+          817,
+          206
+        ],
+        [
+          815,
+          236
+        ],
+        [
+          800,
+          256
+        ],
+        [
+          781,
+          254
+        ],
+        [
+          758,
+          236
+        ],
+        [
+          743,
+          208
+        ]
+      ]
+    },
+    {
+      "name": "Head left cheek outer",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          508,
+          179
+        ],
+        [
+          499,
+          201
+        ],
+        [
+          495,
+          227
+        ],
+        [
+          499,
+          253
+        ],
+        [
+          511,
+          271
+        ],
+        [
+          527,
+          282
+        ]
+      ]
+    },
+    {
+      "name": "Head right cheek outer",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          742,
+          186
+        ],
+        [
+          750,
+          210
+        ],
+        [
+          751,
+          233
+        ],
+        [
+          743,
+          254
+        ],
+        [
+          728,
+          272
+        ],
+        [
+          711,
+          283
+        ]
+      ]
+    },
+    {
+      "name": "Chin underside",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          528,
+          282
+        ],
+        [
+          550,
+          293
+        ],
+        [
+          581,
+          301
+        ],
+        [
+          620,
+          303
+        ],
+        [
+          654,
+          298
+        ],
+        [
+          681,
+          290
+        ],
+        [
+          711,
+          283
+        ]
+      ]
+    },
+    {
+      "name": "Left ear inner fold",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          511,
+          154
+        ],
+        [
+          494,
+          163
+        ],
+        [
+          483,
+          186
+        ],
+        [
+          476,
+          216
+        ],
+        [
+          478,
+          245
+        ],
+        [
+          486,
+          258
+        ]
+      ]
+    },
+    {
+      "name": "Right ear inner fold",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          737,
+          133
+        ],
+        [
+          753,
+          147
+        ],
+        [
+          767,
+          173
+        ],
+        [
+          779,
+          207
+        ],
+        [
+          778,
+          230
+        ]
+      ]
+    },
+    {
+      "name": "Forehead center fur tuft",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 1,
+      "points": [
+        [
+          600,
+          110
+        ],
+        [
+          609,
+          122
+        ],
+        [
+          621,
+          133
+        ]
+      ]
+    },
+    {
+      "name": "Left brow",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          545,
+          168
+        ],
+        [
+          560,
+          160
+        ],
+        [
+          574,
+          161
+        ]
+      ]
+    },
+    {
+      "name": "Right brow",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          659,
+          158
+        ],
+        [
+          675,
+          160
+        ],
+        [
+          687,
+          170
+        ]
+      ]
+    },
+    {
+      "name": "Left eye white contour",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          541,
+          179
+        ],
+        [
+          550,
+          167
+        ],
+        [
+          565,
+          162
+        ],
+        [
+          581,
+          168
+        ],
+        [
+          592,
+          185
+        ],
+        [
+          594,
+          204
+        ],
+        [
+          587,
+          221
+        ],
+        [
+          574,
+          226
+        ],
+        [
+          559,
+          222
+        ],
+        [
+          548,
+          210
+        ],
+        [
+          541,
+          192
+        ],
+        [
+          541,
+          179
+        ]
+      ]
+    },
+    {
+      "name": "Right eye white contour",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          648,
+          178
+        ],
+        [
+          659,
+          163
+        ],
+        [
+          675,
+          161
+        ],
+        [
+          689,
+          170
+        ],
+        [
+          698,
+          189
+        ],
+        [
+          698,
+          206
+        ],
+        [
+          689,
+          221
+        ],
+        [
+          674,
+          224
+        ],
+        [
+          660,
+          218
+        ],
+        [
+          650,
+          206
+        ],
+        [
+          648,
+          178
+        ]
+      ]
+    },
+    {
+      "name": "Left pupil",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          564,
+          186
+        ],
+        [
+          575,
+          183
+        ],
+        [
+          582,
+          191
+        ],
+        [
+          582,
+          209
+        ],
+        [
+          574,
+          216
+        ],
+        [
+          564,
+          211
+        ],
+        [
+          560,
+          200
+        ],
+        [
+          564,
+          186
+        ]
+      ]
+    },
+    {
+      "name": "Right pupil",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          674,
+          185
+        ],
+        [
+          683,
+          185
+        ],
+        [
+          691,
+          194
+        ],
+        [
+          689,
+          209
+        ],
+        [
+          680,
+          216
+        ],
+        [
+          672,
+          208
+        ],
+        [
+          671,
+          195
+        ],
+        [
+          674,
+          185
+        ]
+      ]
+    },
+    {
+      "name": "Muzzle left upper boundary",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          602,
+          215
+        ],
+        [
+          582,
+          222
+        ],
+        [
+          559,
+          232
+        ],
+        [
+          541,
+          250
+        ],
+        [
+          533,
+          269
+        ]
+      ]
+    },
+    {
+      "name": "Muzzle right upper boundary",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          623,
+          216
+        ],
+        [
+          645,
+          224
+        ],
+        [
+          671,
+          239
+        ],
+        [
+          682,
+          257
+        ]
+      ]
+    },
+    {
+      "name": "Nose shape",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          595,
+          219
+        ],
+        [
+          609,
+          213
+        ],
+        [
+          626,
+          217
+        ],
+        [
+          636,
+          229
+        ],
+        [
+          629,
+          244
+        ],
+        [
+          615,
+          254
+        ],
+        [
+          600,
+          248
+        ],
+        [
+          589,
+          235
+        ],
+        [
+          595,
+          219
+        ]
+      ]
+    },
+    {
+      "name": "Nose shine",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 1,
+      "points": [
+        [
+          608,
+          225
+        ],
+        [
+          615,
+          223
+        ],
+        [
+          622,
+          225
+        ]
+      ]
+    },
+    {
+      "name": "Nose center",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          614,
+          252
+        ],
+        [
+          613,
+          269
+        ]
+      ]
+    },
+    {
+      "name": "Left smile",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          613,
+          269
+        ],
+        [
+          599,
+          284
+        ],
+        [
+          580,
+          290
+        ],
+        [
+          560,
+          283
+        ],
+        [
+          545,
+          270
+        ]
+      ]
+    },
+    {
+      "name": "Right smile",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          613,
+          269
+        ],
+        [
+          628,
+          285
+        ],
+        [
+          646,
+          291
+        ],
+        [
+          665,
+          282
+        ],
+        [
+          671,
+          270
+        ]
+      ]
+    },
+    {
+      "name": "Tongue outline",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          603,
+          286
+        ],
+        [
+          600,
+          307
+        ],
+        [
+          606,
+          329
+        ],
+        [
+          620,
+          344
+        ],
+        [
+          634,
+          339
+        ],
+        [
+          647,
+          320
+        ],
+        [
+          646,
+          298
+        ]
+      ]
+    },
+    {
+      "name": "Tongue crease",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 1,
+      "points": [
+        [
+          621,
+          302
+        ],
+        [
+          626,
+          319
+        ]
+      ]
+    },
+    {
+      "name": "Collar upper boundary",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          535,
+          290
+        ],
+        [
+          521,
+          303
+        ],
+        [
+          537,
+          319
+        ],
+        [
+          565,
+          332
+        ],
+        [
+          603,
+          339
+        ],
+        [
+          643,
+          339
+        ],
+        [
+          681,
+          327
+        ],
+        [
+          706,
+          307
+        ],
+        [
+          702,
+          290
+        ]
+      ]
+    },
+    {
+      "name": "Collar lower boundary",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          522,
+          311
+        ],
+        [
+          523,
+          329
+        ],
+        [
+          548,
+          347
+        ],
+        [
+          582,
+          360
+        ],
+        [
+          621,
+          365
+        ],
+        [
+          661,
+          358
+        ],
+        [
+          692,
+          343
+        ],
+        [
+          709,
+          324
+        ]
+      ]
+    },
+    {
+      "name": "Collar tag ring",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          615,
+          361
+        ],
+        [
+          613,
+          376
+        ],
+        [
+          621,
+          386
+        ],
+        [
+          630,
+          376
+        ],
+        [
+          627,
+          362
+        ]
+      ]
+    },
+    {
+      "name": "Collar tag round",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          617,
+          380
+        ],
+        [
+          599,
+          390
+        ],
+        [
+          595,
+          409
+        ],
+        [
+          605,
+          425
+        ],
+        [
+          623,
+          429
+        ],
+        [
+          641,
+          422
+        ],
+        [
+          649,
+          407
+        ],
+        [
+          641,
+          389
+        ],
+        [
+          628,
+          380
+        ],
+        [
+          617,
+          380
+        ]
+      ]
+    },
+    {
+      "name": "Body left shoulder",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          530,
+          334
+        ],
+        [
+          504,
+          358
+        ],
+        [
+          482,
+          391
+        ],
+        [
+          465,
+          423
+        ],
+        [
+          452,
+          457
+        ]
+      ]
+    },
+    {
+      "name": "Body right shoulder",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          703,
+          333
+        ],
+        [
+          724,
+          364
+        ],
+        [
+          735,
+          392
+        ],
+        [
+          737,
+          432
+        ],
+        [
+          731,
+          460
+        ]
+      ]
+    },
+    {
+      "name": "Chest tuft left",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          582,
+          362
+        ],
+        [
+          574,
+          384
+        ],
+        [
+          583,
+          409
+        ],
+        [
+          596,
+          400
+        ],
+        [
+          602,
+          428
+        ]
+      ]
+    },
+    {
+      "name": "Chest tuft right",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          657,
+          362
+        ],
+        [
+          664,
+          385
+        ],
+        [
+          656,
+          413
+        ],
+        [
+          643,
+          405
+        ],
+        [
+          637,
+          433
+        ]
+      ]
+    },
+    {
+      "name": "Chest point",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          602,
+          428
+        ],
+        [
+          614,
+          459
+        ],
+        [
+          627,
+          475
+        ],
+        [
+          637,
+          433
+        ]
+      ]
+    },
+    {
+      "name": "Left outer haunch",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          453,
+          456
+        ],
+        [
+          433,
+          464
+        ],
+        [
+          415,
+          481
+        ],
+        [
+          405,
+          510
+        ],
+        [
+          410,
+          532
+        ],
+        [
+          427,
+          540
+        ]
+      ]
+    },
+    {
+      "name": "Left hind paw outline",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          427,
+          540
+        ],
+        [
+          449,
+          549
+        ],
+        [
+          481,
+          550
+        ],
+        [
+          498,
+          545
+        ],
+        [
+          513,
+          530
+        ],
+        [
+          513,
+          511
+        ],
+        [
+          498,
+          493
+        ]
+      ]
+    },
+    {
+      "name": "Left paw toe lines",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          455,
+          523
+        ],
+        [
+          461,
+          537
+        ],
+        [
+          457,
+          549
+        ]
+      ]
+    },
+    {
+      "name": "Left paw toe 2",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          478,
+          523
+        ],
+        [
+          484,
+          539
+        ],
+        [
+          479,
+          549
+        ]
+      ]
+    },
+    {
+      "name": "Left front leg outer",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          551,
+          371
+        ],
+        [
+          546,
+          418
+        ],
+        [
+          542,
+          470
+        ],
+        [
+          535,
+          509
+        ],
+        [
+          524,
+          523
+        ]
+      ]
+    },
+    {
+      "name": "Left front paw outline",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          524,
+          523
+        ],
+        [
+          514,
+          537
+        ],
+        [
+          520,
+          548
+        ],
+        [
+          540,
+          553
+        ],
+        [
+          574,
+          553
+        ],
+        [
+          587,
+          542
+        ],
+        [
+          582,
+          527
+        ]
+      ]
+    },
+    {
+      "name": "Left front leg inner",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          582,
+          527
+        ],
+        [
+          583,
+          474
+        ],
+        [
+          589,
+          434
+        ]
+      ]
+    },
+    {
+      "name": "Left front toes",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          540,
+          532
+        ],
+        [
+          544,
+          546
+        ],
+        [
+          540,
+          553
+        ]
+      ]
+    },
+    {
+      "name": "Left front toe 2",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          562,
+          531
+        ],
+        [
+          566,
+          547
+        ],
+        [
+          562,
+          553
+        ]
+      ]
+    },
+    {
+      "name": "Right front leg outer",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          672,
+          373
+        ],
+        [
+          682,
+          418
+        ],
+        [
+          690,
+          474
+        ],
+        [
+          698,
+          513
+        ],
+        [
+          712,
+          524
+        ]
+      ]
+    },
+    {
+      "name": "Right front paw outline",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          712,
+          524
+        ],
+        [
+          724,
+          536
+        ],
+        [
+          719,
+          548
+        ],
+        [
+          698,
+          554
+        ],
+        [
+          664,
+          552
+        ],
+        [
+          651,
+          540
+        ],
+        [
+          657,
+          526
+        ]
+      ]
+    },
+    {
+      "name": "Right front leg inner",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          657,
+          526
+        ],
+        [
+          655,
+          471
+        ],
+        [
+          643,
+          433
+        ]
+      ]
+    },
+    {
+      "name": "Right front toes",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          698,
+          532
+        ],
+        [
+          693,
+          547
+        ],
+        [
+          698,
+          554
+        ]
+      ]
+    },
+    {
+      "name": "Right front toe 2",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          674,
+          532
+        ],
+        [
+          670,
+          548
+        ],
+        [
+          674,
+          553
+        ]
+      ]
+    },
+    {
+      "name": "Right haunch",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          734,
+          452
+        ],
+        [
+          755,
+          470
+        ],
+        [
+          773,
+          495
+        ],
+        [
+          777,
+          521
+        ],
+        [
+          763,
+          541
+        ],
+        [
+          738,
+          546
+        ]
+      ]
+    },
+    {
+      "name": "Right hind paw toes",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 2,
+      "points": [
+        [
+          747,
+          524
+        ],
+        [
+          746,
+          539
+        ]
+      ]
+    },
+    {
+      "name": "Tail outer",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          450,
+          470
+        ],
+        [
+          425,
+          447
+        ],
+        [
+          403,
+          423
+        ],
+        [
+          389,
+          390
+        ],
+        [
+          389,
+          360
+        ],
+        [
+          402,
+          330
+        ],
+        [
+          423,
+          312
+        ],
+        [
+          445,
+          308
+        ],
+        [
+          460,
+          314
+        ],
+        [
+          451,
+          326
+        ]
+      ]
+    },
+    {
+      "name": "Tail inner return",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 3,
+      "points": [
+        [
+          451,
+          326
+        ],
+        [
+          435,
+          349
+        ],
+        [
+          430,
+          374
+        ],
+        [
+          433,
+          405
+        ],
+        [
+          448,
+          430
+        ]
+      ]
+    },
+    {
+      "name": "Back left spot contour",
+      "tool": "stroke",
+      "color": "black",
+      "smooth": true,
+      "width": 1,
+      "points": [
+        [
+          478,
+          403
+        ],
+        [
+          495,
+          391
+        ],
+        [
+          515,
+          393
+        ]
+      ]
+    }
+  ]
+}
