@@ -79,12 +79,40 @@ def build_color_raster_drawing(source, max_width=240, max_height=180, colors=4):
     size = (max(1, round(width * scale)), max(1, round(height * scale)))
     image = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
     rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    # Only use known, calibrated ribbon swatches.
+    # Segment near-white antialiased background before palette matching.
+    # RGB nearest-neighbor alone turns pale edge pixels into isolated orange
+    # or brown speckles on white fur.
     palette_names = ("black", "brown", "orange", "white")
     palette = np.array([RGB[name] for name in palette_names], dtype=np.int32)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    saturation = hsv[:, :, 1]
+    brightness = hsv[:, :, 2]
+    rgb_min = rgb.min(axis=2)
+    # A conservative white rule: never discard clearly saturated fur colors.
+    background = ((brightness >= 240) & (saturation <= 42) &
+                  (rgb_min >= 220))
     pixels = rgb.reshape(-1, 3).astype(np.int32)
-    nearest = np.argmin(np.sum((pixels[:, None, :] - palette[None, :, :]) ** 2,
-                               axis=2), axis=1).reshape(size[1], size[0])
+    distances = np.sum((pixels[:, None, :] - palette[None, :, :]) ** 2,
+                       axis=2)
+    nearest = np.argmin(distances, axis=1).reshape(size[1], size[0])
+    nearest[background] = palette_names.index("white")
+
+    # Only suppress isolated colored artifacts on nearly white background.
+    # Preserve genuine small marks (eyes, nose, dark line art) and any
+    # connected color patches of three pixels or more.
+    for name in ("brown", "orange"):
+        index = palette_names.index(name)
+        colored = (nearest == index).astype(np.uint8)
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(colored, 8)
+        for component in range(1, count):
+            if stats[component, cv2.CC_STAT_AREA] >= 3:
+                continue
+            region = labels == component
+            # Only reclassify bright, low-saturation components. Do not
+            # erase real saturated freckles or small colored details.
+            if np.all((brightness[region] >= 195) &
+                      (saturation[region] <= 85)):
+                nearest[region] = palette_names.index("white")
     mapped = palette[nearest].astype(np.uint8)
     folder = Path("output")
     folder.mkdir(parents=True, exist_ok=True)
