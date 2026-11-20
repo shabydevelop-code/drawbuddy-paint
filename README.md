@@ -1,51 +1,32 @@
-# DrawBuddy — Microsoft Paint automation
+# DrawBuddy — Paint reference tracing
+
+DrawBuddy traces linework from `assets/dog-reference.png` and draws it in classic Microsoft Paint using real mouse movements. It does not paste the reference into Paint.
+
+## Requirements
+
+Windows, Python, classic Paint, and `pyautogui`, `opencv-python`, `numpy` (plus existing project dependencies).
 
 ## Run
 
-Open classic Microsoft Paint maximized, Home tab visible, and a new blank canvas.
+Open Paint maximized with a **new blank canvas** and the Home tab visible.
 
-- `python .\main.py dog-outline` — **new** diagnostic: one continuous smooth dog silhouette drawn by the real Paint Pencil tool, using actual mouse movements. No image import, no paste, no fill.
-- `python .\main.py dog` — previous 20-step geometric dog, unchanged.
+```powershell
+python -m pip install opencv-python numpy
+python trace_reference.py assets/dog-reference.png
+python main.py dog --speed 2
+```
 
-Do not touch the mouse or keyboard during drawing. Move the cursor to a screen corner to trigger PyAutoGUI failsafe if needed.
-
-## Drawing speed
-
-- `python .\main.py dog-outline --speed 2` — twice the default Pencil stroke speed.
-- `python .\main.py dog-outline --speed 0.5` — half speed.
-- `config.json` contains `drawing_speed` (default `1.0`), used when `--speed` is omitted.
-- Allowed speed range: greater than 0 through 20. Command-line option overrides config.
-- Speed applies **only to continuous Pencil strokes**. Tool/color selection, shape drags,
-  UI focus and verification delays stay unchanged for reliability.
-- High speeds may produce less consistent Paint strokes depending on Windows input processing.
+The generator writes `drawings/dog.json` and `drawings/dog-audit.json`. These are **generated working outputs**, not versioned drawing history. Regenerate them after pulling changes. The audit predicts enclosed regions but **does not guarantee that Paint's bucket will not leak**; inspect the actual drawing before coloring.
 
 ## Architecture
 
-- `drawings/*.json`: drawing instructions; no UI coordinates for tools.
-- `drawbuddy/drawing_engine.py`: validates and executes shape and stroke commands; interpolates smooth paths.
-- `drawbuddy/elements.py`: single registry of Paint UI tool coordinates.
-- `drawbuddy/components.py`: tools, colors, canvas.
-- `drawbuddy/controller.py`: window focus, mouse, keyboard, pixel sampling.
+- `trace_reference.py`: image ink mask, Zhang–Suen skeletonization, pixel-path tracing, source width analysis, conservative short-bridge repair, visual stroke order, raster connectivity audit, and JSON export; separated into OOP classes.
+- `drawbuddy/drawing_engine.py`: validated JSON execution.
+- `drawbuddy/components.py`: Paint tools, colors, stroke sizes and canvas.
+- `drawbuddy/controller.py`: actual mouse and keyboard interaction.
+- `drawbuddy/elements.py`: Paint UI coordinate registry.
+- `assets/dog-reference.png`: canonical source illustration.
 
-`stroke` accepts `color`, `points` and optional `smooth: true`. The Pencil tool is at (244,70), based on the existing Paint UI calibration. This new operation has not yet been tested against the user's Windows Paint. Existing drawing and color selection routines are unchanged.
+Move the mouse to a screen corner for PyAutoGUI failsafe. The final drawing screenshot is saved as `paint-diagnostic.png`.
 
-`paint-diagnostic.png` is saved after each run, including failures. The new silhouette intentionally has no fill; closed-path filling and richer illustration are later stages.
-
-## Filled continuous silhouette
-
-Open a new white canvas in classic Paint, then run:
-
-```powershell
-python .\main.py dog-filled --speed 4
-```
-
-The `closed_path` tool draws a Pencil outline, closes it, selects the bucket, fills at `fill_point`, and checks both the fill pixel and an optional white `outside_point` for leakage. `dog-outline` remains unchanged. The canvas must be large enough for all points.
-
-JSON step example: `{"name":"body","tool":"closed_path","color":"black","fill":"orange","smooth":true,"points":[[300,300],[500,300],[500,450],[300,450]],"fill_point":[400,375],"outside_point":[550,500]}`.
-
-## Detailed dog (Paint UI only)
-
-Run on a new blank canvas: `python .\main.py dog-detailed --speed 4`
-
-The drawing first creates and fills the validated orange silhouette, then adds a brown ear and muzzle, black eye and nose, and contour details. Each operation is performed with actual Paint tools and mouse movements; no image is pasted.
-
+There is one active tracing script and no retained version-numbered scripts or legacy dog drawings on the current branch. Git commit history remains available.
