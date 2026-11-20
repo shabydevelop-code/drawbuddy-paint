@@ -17,5 +17,10 @@ ELEMENTS = {
     'rounded_rectangle': UIElement('rounded_rectangle', 460, 64, 'Rounded Rectangle'),
     'ellipse': UIElement('ellipse', 420, 64, 'Ellipse'),
     'pencil': UIElement('pencil', 244, 70, 'Pencil tool for continuous strokes'),
+    'size_menu': UIElement('size_menu', 636, 91, 'Paint Size dropdown'),
+    'size_1': UIElement('size_1', 674, 139, 'Size option 1'),
+    'size_2': UIElement('size_2', 674, 179, 'Size option 2'),
+    'size_3': UIElement('size_3', 674, 219, 'Size option 3'),
+    'size_4': UIElement('size_4', 674, 259, 'Size option 4'),
     'bucket': UIElement('bucket', 268, 70, 'Fill with color'),
 }
