@@ -207,10 +207,11 @@ class PaintController:
         time.sleep(0.01)
 
     def raster_runs(self, runs):
-        """Draw many horizontal spans without per-run UI delays or logging.
+        """Draw independent horizontal spans, never connecting their endpoints.
 
-        Keep mouse down only within each ink span: connecting separate spans
-        would add unwanted lines and change the source image.
+        A short release dwell lets Paint consume mouseUp before the pointer
+        moves to the next span; otherwise long accidental connector lines
+        can appear on fast runs.
         """
         if not runs:
             return
@@ -225,12 +226,14 @@ class PaintController:
         self.activate()
         old_pause, old_min = pg.PAUSE, pg.MINIMUM_DURATION
         pg.PAUSE, pg.MINIMUM_DURATION = 0, 0
-        # Small dwell permits Paint to process the pencil event. At high
-        # speed this remains bounded rather than introducing 300ms per run.
         dwell = max(0.002, 0.025 / self.drawing_speed)
+        release_dwell = 0.012
         try:
             for i, (x1, x2, y) in enumerate(runs):
                 check_cancel()
+                # Explicitly release before moving to a disconnected span.
+                pg.mouseUp(button='left')
+                self.wait_until(time.perf_counter() + release_dwell)
                 pg.moveTo(*self.point(x1, y), duration=0)
                 pg.mouseDown(button='left')
                 try:
@@ -239,9 +242,11 @@ class PaintController:
                     self.wait_until(time.perf_counter() + dwell)
                 finally:
                     pg.mouseUp(button='left')
+                    self.wait_until(time.perf_counter() + release_dwell)
                 if (i + 1) % 500 == 0:
                     print(f"  raster progress: {i + 1}/{len(runs)} spans")
         finally:
+            pg.mouseUp(button='left')
             pg.PAUSE, pg.MINIMUM_DURATION = old_pause, old_min
 
     def press(self, key):
