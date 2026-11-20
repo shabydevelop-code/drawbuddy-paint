@@ -48,3 +48,13 @@ Optional: `--binary-threshold 110` controls the dark-pixel cutoff; `--no-publish
 ### Binary outline-only stage (default)
 
 Run `python main.py --binary-source assets/dog-reference.png --speed 2` on a blank white Paint canvas. This draws black outer and inner boundaries without any bucket fill. The previous experimental region filling is opt-in with `--binary-fill` and is not validated; the old raster method remains `--binary-runs`. Small details may be omitted. Review the outlines before enabling fills.
+
+## Scene Engine diagnostic sharing (GitHub)
+
+Run the offline scene analysis and publish a small, allowlisted snapshot of the latest diagnostic PNGs and JSON reports. The source files under `output/scene-engine` remain ignored; only `diagnostics/latest` is committed. No Paint operation is performed.
+
+```powershell
+python scene_engine.py assets/dog-reference.png; if ($LASTEXITCODE -eq 0) { python publish_scene_diagnostics.py --push }
+```
+
+The publisher requires branch `main`, refuses to overwrite uncommitted changes in `diagnostics/latest`, stages only that directory, and pushes to `origin/main` when `--push` is specified. Run `git pull --ff-only origin main` before publishing. Images may be reviewed directly from GitHub without attaching them to a chat.
