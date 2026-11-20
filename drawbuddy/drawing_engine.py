@@ -41,6 +41,8 @@ class DrawingEngine:
                     raise ValueError(f'Step {index}: stroke needs at least two [x,y] points')
                 if type(step.get('smooth', False)) is not bool:
                     raise ValueError(f'Step {index}: smooth must be boolean')
+                if type(step.get('width', 1)) is not int or not 1 <= step.get('width', 1) <= 3:
+                    raise ValueError(f'Step {index}: width must be 1, 2 or 3')
                 if step['tool'] == 'closed_path':
                     if step.get('fill') not in RGB:
                         raise ValueError(f'Step {index}: unsupported fill color')
@@ -127,7 +129,25 @@ class DrawingEngine:
                     if step.get('smooth', False):
                         points = self.interpolate(points)
                     self.canvas.stroke(points)
-                    print(f'  DONE outline: {len(points)} mouse positions')
+                    width = step.get('width', 1)
+                    # Pencil has a fixed calibrated size. Build a thicker line
+                    # with small perpendicular passes using the same mouse tool.
+                    # Avoid changing Paint's ribbon-size setting.
+                    if width > 1:
+                        for offset in ((1,) if width == 2 else (-1, 1)):
+                            shifted = []
+                            for i, (px, py) in enumerate(points):
+                                prev = points[max(0, i - 1)]
+                                nxt = points[min(len(points) - 1, i + 1)]
+                                dx, dy = nxt[0] - prev[0], nxt[1] - prev[1]
+                                length = math.hypot(dx, dy)
+                                if length == 0:
+                                    shifted.append((px, py))
+                                else:
+                                    shifted.append((round(px - offset * dy / length),
+                                                    round(py + offset * dx / length)))
+                            self.canvas.stroke(shifted)
+                    print(f'  DONE outline: {len(points)} mouse positions, width={width}')
                     if tool == 'closed_path':
                         self.tools.bucket.click()
                         self.colors.select_primary(step['fill'])
