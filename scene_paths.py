@@ -39,38 +39,53 @@ def boundary_edges(labels):
 
 
 def trace_network(edges):
+    """Trace every unique edge once; O(E) traversal without repeated graph scans.
+
+    Branch vertices terminate paths. Degree-two chains and isolated cycles
+    are followed directly using mutable adjacency sets.
+    """
     paths = []
     for pair, original in sorted(edges.items()):
         adjacency = defaultdict(set)
         for a, b in original:
             adjacency[a].add(b)
             adjacency[b].add(a)
+        branch_points = [p for p, neighbors in adjacency.items()
+                         if len(neighbors) != 2]
         remaining = set(original)
 
-        def key(a, b):
+        def edge_key(a, b):
             return (a, b) if a < b else (b, a)
 
-        while remaining:
-            starts = [p for p in adjacency if len(adjacency[p]) != 2 and
-                      any(key(p, q) in remaining for q in adjacency[p])]
-            start = min(starts) if starts else min(min(e) for e in remaining)
-            next_point = min(q for q in adjacency[start]
-                             if key(start, q) in remaining)
-            remaining.remove(key(start, next_point))
-            chain = [start, next_point]
-            while len(adjacency[chain[-1]]) == 2:
-                here = chain[-1]
-                options = sorted(q for q in adjacency[here]
-                                 if key(here, q) in remaining)
-                if not options:
-                    break
-                nxt = options[0]
-                remaining.remove(key(here, nxt))
+        def follow(start, neighbor):
+            chain = [start]
+            current, nxt = start, neighbor
+            while True:
+                edge = edge_key(current, nxt)
+                if edge not in remaining:
+                    raise RuntimeError('Boundary edge reused during tracing')
+                remaining.remove(edge)
+                adjacency[current].remove(nxt)
+                adjacency[nxt].remove(current)
                 chain.append(nxt)
-                if nxt == start:
+                current = nxt
+                if current == start or original_degree[current] != 2:
                     break
+                if not adjacency[current]:
+                    raise RuntimeError('Broken degree-two boundary chain')
+                nxt = next(iter(adjacency[current]))
             paths.append({'colors': list(pair),
                           'points': [list(p) for p in chain]})
+
+        original_degree = {p: len(n) for p, n in adjacency.items()}
+        # Consume every path touching a branch or endpoint.
+        for start in branch_points:
+            while adjacency[start]:
+                follow(start, next(iter(adjacency[start])))
+        # Remaining edges form closed degree-two cycles.
+        while remaining:
+            start, nxt = next(iter(remaining))
+            follow(start, nxt)
     return paths
 
 
