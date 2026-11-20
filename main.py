@@ -7,6 +7,7 @@ from drawbuddy.drawing_engine import DrawingEngine
 from drawbuddy.controller import DrawingCancelled
 from drawbuddy.freehand_painter import build_freehand_drawing
 from drawbuddy.lineart_painter import build_lineart_drawing
+from drawbuddy.centerline_painter import build_centerline_drawing
 from drawbuddy.continuous_painter import build_continuous_color_drawing
 from drawbuddy.natural_painter import build_natural_drawing
 from drawbuddy.result_publisher import ResultPublisher
@@ -21,6 +22,7 @@ def main():
     parser.add_argument('--no-publish-result', action='store_true', help='Skip automatic Paint canvas capture and GitHub upload')
     parser.add_argument('--natural-source', type=Path, help='Trace outlines and fill color regions with natural vertical strokes')
     parser.add_argument('--continuous-source', type=Path, help='Optimize 0/1/color pixels into continuous mouse strokes')
+    parser.add_argument('--centerline-source', type=Path, help='Experimental 2px centerline contours without fills')
     parser.add_argument('--lineart-source', type=Path, help='Draw black outlines only, with no fill')
     parser.add_argument('--freehand-source', type=Path, help='Draw source with contour-following freehand mouse strokes')
     parser.add_argument('--binary-source', type=Path, help='Print the source as 0/1 horizontal pixel runs (default)')
@@ -33,6 +35,8 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
     drawings_dir = root / 'drawings'
+    if args.centerline_source and (args.natural_source or args.continuous_source or args.lineart_source or args.freehand_source or args.binary_source or args.drawing):
+        parser.error('Use --centerline-source alone')
     if args.natural_source and (args.continuous_source or args.lineart_source or args.freehand_source or args.binary_source or args.drawing):
         parser.error('Use --natural-source alone')
     if args.continuous_source and (args.lineart_source or args.freehand_source or args.binary_source or args.drawing):
@@ -41,7 +45,10 @@ def main():
         parser.error('Use --lineart-source alone')
     if args.freehand_source and (args.binary_source or args.drawing):
         parser.error('Use --freehand-source alone, without a drawing or --binary-source')
-    if args.natural_source:
+    if args.centerline_source:
+        drawing = build_centerline_drawing(args.centerline_source)
+        print(f'Centerline drawing plan: {drawing["lineart"]}')
+    elif args.natural_source:
         drawing = build_natural_drawing(args.natural_source)
         print(f'Natural drawing plan: {drawing["natural"]}')
     elif args.continuous_source:
