@@ -152,6 +152,42 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     duplicate_pixels = 0
     if not plan:
         raise ValueError('No drawable paths after mapping')
+    # Schedule real contours before tiny details. Within each Paint size,
+    # choose the nearest available stroke endpoint, reversing open strokes
+    # when it saves travel. This only changes order, never geometry.
+    from collections import defaultdict
+    buckets = defaultdict(list)
+    for size, points in plan:
+        buckets[size].append(points)
+    ordered = []
+    cursor = None
+    for size in sorted(buckets):
+        remaining_paths = buckets[size]
+        # Long contours first; isolated dots and two-point details last.
+        long_paths = [p for p in remaining_paths if len(set(map(tuple, p))) >= 5]
+        short_paths = [p for p in remaining_paths if len(set(map(tuple, p))) < 5]
+        for group in (long_paths, short_paths):
+            while group:
+                if cursor is None:
+                    idx = max(range(len(group)), key=lambda i: len(group[i]))
+                    reverse = False
+                else:
+                    def travel(i):
+                        p = group[i]
+                        forward = (p[0][0]-cursor[0])**2 + (p[0][1]-cursor[1])**2
+                        backward = (p[-1][0]-cursor[0])**2 + (p[-1][1]-cursor[1])**2
+                        return (min(forward, backward), -len(p), i)
+                    idx = min(range(len(group)), key=travel)
+                    p = group[idx]
+                    forward = (p[0][0]-cursor[0])**2 + (p[0][1]-cursor[1])**2
+                    backward = (p[-1][0]-cursor[0])**2 + (p[-1][1]-cursor[1])**2
+                    reverse = backward < forward
+                points = group.pop(idx)
+                if reverse:
+                    points = points[::-1]
+                ordered.append((size, points))
+                cursor = points[-1]
+    plan = ordered
     # Validate planned motion and report natural contour intersections.
     planned_pixels = set()
     overlap_count = 0
@@ -212,8 +248,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     print('Use a NEW blank white maximized Paint canvas. F8 stops drawing.')
     engine.tools.select('pencil')
     engine.colors.select_primary('black')
-    # Group by size to avoid reopening the Paint ribbon for each stroke.
-    plan.sort(key=lambda item: item[0])
+    # The validated plan is already grouped by size and travel-optimized.
     try:
         for index, (size, points) in enumerate(plan, 1):
             from drawbuddy.controller import check_cancel
