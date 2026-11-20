@@ -257,7 +257,14 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     for _, points in base_plan:
         run = []
         for point in points:
-            if pixel_sizes.get(tuple(point), 1) >= 3:
+            # Protect the small, closely spaced eye and nose details.
+            # Coordinates are relative to the normalized dog image
+            # (reference: 247x270), so the exclusion scales with input.
+            local_x = (point[0] - left) / max(dest_w, 1)
+            local_y = (point[1] - top) / max(dest_h, 1)
+            facial_detail = (0.47 <= local_x <= 0.79 and
+                             0.14 <= local_y <= 0.40)
+            if not facial_detail and pixel_sizes.get(tuple(point), 1) >= 3:
                 if not run or run[-1] != point:
                     run.append(point)
             else:
