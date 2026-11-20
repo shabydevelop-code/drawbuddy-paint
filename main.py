@@ -88,11 +88,11 @@ def main():
     if type(speed) not in (float, int) or not math.isfinite(speed) or speed <= 0 or speed > 100:
         parser.error('drawing speed must be greater than 0 and at most 100')
     engine = DrawingEngine(speed=float(speed))
-    print('Press ESC at any time to stop drawing safely.')
+    print('Press F8 at any time to stop drawing without cancelling Paint strokes.')
     try:
         engine.execute(drawing, root / 'paint-diagnostic.png')
     except DrawingCancelled:
-        print('STOPPED: drawing cancelled by Esc. Partial drawing remains in Paint.')
+        print('STOPPED: drawing cancelled by F8. Partial drawing remains in Paint.')
         return
     engine.paint.refresh_display()
     if args.binary_source and not args.no_compare:
