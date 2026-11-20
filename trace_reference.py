@@ -87,6 +87,45 @@ class ColorBoundaryExtractor:
         return clean
 
 
+class ColorBoundaryConnector:
+    """Connect only open color-edge endpoints to nearby original black ink."""
+
+    def __init__(self, max_distance=12, min_alignment=0.2):
+        self.max_distance = max_distance
+        self.min_alignment = min_alignment
+
+    def connect(self, color_paths, ink_mask):
+        height, width = ink_mask.shape
+        bridges = []
+        for path in color_paths:
+            if len(path) < 3 or path[0] == path[-1]:
+                continue
+            for endpoint, inner in ((path[0], path[1]), (path[-1], path[-2])):
+                x, y = map(int, endpoint)
+                dx, dy = x - int(inner[0]), y - int(inner[1])
+                tangent = float(np.hypot(dx, dy))
+                if tangent < 0.01:
+                    continue
+                radius = self.max_distance
+                x0, x1 = max(0, x-radius), min(width, x+radius+1)
+                y0, y1 = max(0, y-radius), min(height, y+radius+1)
+                ys, xs = np.nonzero(ink_mask[y0:y1, x0:x1])
+                if len(xs) == 0:
+                    continue
+                xs, ys = xs+x0, ys+y0
+                vx, vy = xs-x, ys-y
+                distances = np.hypot(vx, vy)
+                alignment = (vx*dx+vy*dy)/np.maximum(distances*tangent, 1e-6)
+                valid = ((distances >= 1.5) & (distances <= radius) &
+                         (alignment >= self.min_alignment))
+                if not np.any(valid):
+                    continue
+                indices = np.flatnonzero(valid)
+                best = indices[np.argmin(distances[indices])]
+                bridges.append([[x, y], [int(xs[best]), int(ys[best])]])
+        return bridges
+
+
 class ZhangSuenThinner:
     """Reduce thick ink to one-pixel centerlines without extra dependencies."""
 
@@ -194,6 +233,7 @@ class ReferenceTracingPipeline:
     def __init__(self, threshold=95, min_length=2):
         self.ink = InkMask(threshold)
         self.color_boundaries = ColorBoundaryExtractor()
+        self.connector = ColorBoundaryConnector()
         self.thinner = ZhangSuenThinner()
         self.tracer = SkeletonPathTracer(min_length)
         self.mapper = PaintCanvasMapper()
@@ -203,10 +243,11 @@ class ReferenceTracingPipeline:
         paths = self.tracer.trace(self.thinner.thin(mask))
         color_mask = self.color_boundaries.extract(source, mask)
         color_paths = self.tracer.trace(self.thinner.thin(color_mask))
+        connectors = self.connector.connect(color_paths, mask)
         if not paths:
             raise ValueError("No ink paths found")
         # Map all paths together so the original and color edges align.
-        combined = paths + color_paths
+        combined = paths + color_paths + connectors
         mapped = self.mapper.map(combined)
         steps = [
             {"name": f"{'Ink' if i < len(paths) else 'Color boundary'} {i + 1:03d}",
@@ -221,7 +262,7 @@ class ReferenceTracingPipeline:
         output.write_text(json.dumps({
             "name": "Dog traced from reference", "steps": steps
         }, indent=2), encoding="utf-8")
-        print(f"Created {output}: {len(paths)} ink paths + {len(color_paths)} color boundary paths; {len(steps)} drawable strokes")
+        print(f"Created {output}: {len(paths)} ink paths, {len(color_paths)} color boundaries, {len(connectors)} color-to-ink connectors; {len(steps)} strokes")
 
 
 def main():
