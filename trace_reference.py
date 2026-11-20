@@ -2,7 +2,7 @@
 
 Usage: python trace_reference.py assets/dog-reference.png
 Requires: opencv-python and numpy.
-No gap repairs, morphology, width estimation, region planning, or fill audit.
+Uses connected color regions for interior boundaries; no guessed connectors or fill guarantee.
 """
 import argparse
 import json
@@ -47,83 +47,73 @@ class InkMask:
         return (np.max(image, axis=2) < self.threshold).astype(np.uint8)
 
 
-class ColorBoundaryExtractor:
-    """Find visible boundaries between differently colored interior regions.
+class ColorRegionSegmenter:
+    """Segment broad color regions before deriving their shared boundaries.
 
-    Uses color-channel edges rather than grayscale darkness, rejects edges
-    adjacent to existing black ink, and filters tiny isolated fragments.
-    It does not infer invisible or deliberately open boundaries.
+    Small regions and near-identical neighboring colors are ignored to avoid
+    turning shading into extra contour lines. No endpoint guessing is used.
     """
 
-    def __init__(self, min_area=18, ink_clearance=4):
-        self.min_area = min_area
-        self.ink_clearance = ink_clearance
+    def __init__(self, clusters=9, min_region_area=140, min_color_distance=26):
+        self.clusters = clusters
+        self.min_region_area = min_region_area
+        self.min_color_distance = min_color_distance
 
     def extract(self, filename, ink_mask):
         image = cv2.imread(str(filename), cv2.IMREAD_COLOR)
         if image is None:
             raise FileNotFoundError(f"Cannot read reference: {filename}")
-        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-        smooth = cv2.GaussianBlur(lab, (5, 5), 0)
-        # Chromatic edges reveal orange/cream and brown/orange transitions
-        # that the black-only line extractor cannot see.
-        channels = (smooth[:, :, 1], smooth[:, :, 2])
-        edges = np.zeros(ink_mask.shape, dtype=np.uint8)
-        for channel in channels:
-            edges = cv2.bitwise_or(edges, cv2.Canny(channel, 22, 55))
-        # Avoid duplicating existing black outlines or their anti-aliased rims.
-        radius = 2 * self.ink_clearance + 1
-        excluded = cv2.dilate(ink_mask.astype(np.uint8),
-                              cv2.getStructuringElement(
-                                  cv2.MORPH_ELLIPSE, (radius, radius)))
-        edges[excluded > 0] = 0
-        # Remove isolated noise, but retain genuine open interior borders.
-        count, labels, stats, _ = cv2.connectedComponentsWithStats(
-            (edges > 0).astype(np.uint8), connectivity=8)
-        clean = np.zeros_like(edges)
-        for label in range(1, count):
-            if stats[label, cv2.CC_STAT_AREA] >= self.min_area:
-                clean[labels == label] = 1
-        return clean
-
-
-class ColorBoundaryConnector:
-    """Connect only open color-edge endpoints to nearby original black ink."""
-
-    def __init__(self, max_distance=12, min_alignment=0.2):
-        self.max_distance = max_distance
-        self.min_alignment = min_alignment
-
-    def connect(self, color_paths, ink_mask):
-        height, width = ink_mask.shape
-        bridges = []
-        for path in color_paths:
-            if len(path) < 3 or path[0] == path[-1]:
+        # Mean-shift smooths gradients while retaining visible color edges.
+        smooth = cv2.pyrMeanShiftFiltering(image, 12, 24)
+        lab = cv2.cvtColor(smooth, cv2.COLOR_BGR2LAB)
+        h, w = ink_mask.shape
+        # Fit the palette on a small, deterministic sample for predictable cost.
+        sample = lab[::3, ::3].reshape(-1, 3).astype(np.float32)
+        cv2.setRNGSeed(7)
+        _, _, palette = cv2.kmeans(
+            sample, self.clusters, None,
+            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 15, 0.5),
+            2, cv2.KMEANS_PP_CENTERS)
+        # Assign every pixel to its nearest palette color.
+        pixels = lab.reshape(-1, 3).astype(np.float32)
+        labels = np.empty(len(pixels), dtype=np.uint8)
+        for start in range(0, len(pixels), 120000):
+            block = pixels[start:start + 120000]
+            distances = np.sum((block[:, None, :] - palette[None, :, :]) ** 2,
+                               axis=2)
+            labels[start:start + len(block)] = np.argmin(distances, axis=1)
+        labels = cv2.medianBlur(labels.reshape(h, w), 5)
+        # Discard small islands independently within each palette class.
+        regions = np.full((h, w), -1, dtype=np.int16)
+        region_colors = []
+        region_count = 0
+        for color in range(len(palette)):
+            count, components, stats, _ = cv2.connectedComponentsWithStats(
+                (labels == color).astype(np.uint8), connectivity=8)
+            for component in range(1, count):
+                if stats[component, cv2.CC_STAT_AREA] < self.min_region_area:
+                    continue
+                regions[components == component] = region_count
+                region_colors.append(palette[color])
+                region_count += 1
+        # Derive each interface once, from adjacent pixels belonging to
+        # different large regions with genuinely different colors.
+        boundaries = np.zeros((h, w), dtype=np.uint8)
+        for dy, dx in ((0, 1), (1, 0)):
+            left = regions[:h-dy, :w-dx]
+            right = regions[dy:, dx:]
+            valid = (left >= 0) & (right >= 0) & (left != right)
+            ys, xs = np.nonzero(valid)
+            if not len(xs):
                 continue
-            for endpoint, inner in ((path[0], path[1]), (path[-1], path[-2])):
-                x, y = map(int, endpoint)
-                dx, dy = x - int(inner[0]), y - int(inner[1])
-                tangent = float(np.hypot(dx, dy))
-                if tangent < 0.01:
-                    continue
-                radius = self.max_distance
-                x0, x1 = max(0, x-radius), min(width, x+radius+1)
-                y0, y1 = max(0, y-radius), min(height, y+radius+1)
-                ys, xs = np.nonzero(ink_mask[y0:y1, x0:x1])
-                if len(xs) == 0:
-                    continue
-                xs, ys = xs+x0, ys+y0
-                vx, vy = xs-x, ys-y
-                distances = np.hypot(vx, vy)
-                alignment = (vx*dx+vy*dy)/np.maximum(distances*tangent, 1e-6)
-                valid = ((distances >= 1.5) & (distances <= radius) &
-                         (alignment >= self.min_alignment))
-                if not np.any(valid):
-                    continue
-                indices = np.flatnonzero(valid)
-                best = indices[np.argmin(distances[indices])]
-                bridges.append([[x, y], [int(xs[best]), int(ys[best])]])
-        return bridges
+            colors = np.asarray(region_colors)
+            delta = np.linalg.norm(colors[left[ys, xs]] -
+                                   colors[right[ys, xs]], axis=1)
+            strong = delta >= self.min_color_distance
+            boundaries[ys[strong], xs[strong]] = 1
+        # The black contour extractor already handles ink boundaries.
+        boundaries[cv2.dilate(ink_mask, np.ones((3, 3), np.uint8)) > 0] = 0
+        return boundaries, region_count
 
 
 class ZhangSuenThinner:
@@ -232,8 +222,7 @@ class ReferenceTracingPipeline:
 
     def __init__(self, threshold=95, min_length=2):
         self.ink = InkMask(threshold)
-        self.color_boundaries = ColorBoundaryExtractor()
-        self.connector = ColorBoundaryConnector()
+        self.color_regions = ColorRegionSegmenter()
         self.thinner = ZhangSuenThinner()
         self.tracer = SkeletonPathTracer(min_length)
         self.mapper = PaintCanvasMapper()
@@ -241,13 +230,12 @@ class ReferenceTracingPipeline:
     def run(self, source, output):
         mask = self.ink.from_image(source)
         paths = self.tracer.trace(self.thinner.thin(mask))
-        color_mask = self.color_boundaries.extract(source, mask)
+        color_mask, region_count = self.color_regions.extract(source, mask)
         color_paths = self.tracer.trace(self.thinner.thin(color_mask))
-        connectors = self.connector.connect(color_paths, mask)
         if not paths:
             raise ValueError("No ink paths found")
         # Map all paths together so the original and color edges align.
-        combined = paths + color_paths + connectors
+        combined = paths + color_paths
         mapped = self.mapper.map(combined)
         steps = [
             {"name": f"{'Ink' if i < len(paths) else 'Color boundary'} {i + 1:03d}",
@@ -262,7 +250,7 @@ class ReferenceTracingPipeline:
         output.write_text(json.dumps({
             "name": "Dog traced from reference", "steps": steps
         }, indent=2), encoding="utf-8")
-        print(f"Created {output}: {len(paths)} ink paths, {len(color_paths)} color boundaries, {len(connectors)} color-to-ink connectors; {len(steps)} strokes")
+        print(f"Created {output}: {region_count} color regions, {len(paths)} ink paths, {len(color_paths)} shared color boundaries; {len(steps)} strokes")
 
 
 def main():
