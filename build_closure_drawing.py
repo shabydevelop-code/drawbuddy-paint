@@ -9,6 +9,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from validate_gap_closures import GapClosureValidator
+from drawing_sequence_planner import DrawingSequencePlanner
 
 
 class ClosureDrawingBuilder:
@@ -51,6 +52,8 @@ class ClosureDrawingBuilder:
                 step["smooth"] = False
         if remaining or integrated != len(accepted):
             raise ValueError(f"Unmatched closure endpoints: {sorted(remaining)}")
+        updated, zones = DrawingSequencePlanner().plan(updated)
+        print('Drawing order: ' + ' -> '.join(f'{name} ({count})' for name, count in zones.items()))
         return updated, len(accepted), len(rejected)
 
     def run(self, source, output):
