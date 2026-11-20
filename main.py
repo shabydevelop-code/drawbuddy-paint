@@ -185,37 +185,57 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
             break
     plan = [(1, points) for points in trails if points is not None]
     joined_trails = original_trail_count - len(plan)
-    # Visual-first schedule: outline-like long gestures first, medium
-    # contours next, isolated short details last. Do not sort by pencil
-    # width: that previously brought hundreds of small size-1 dots forward.
-    # This is a geometric heuristic, not semantic dog-part recognition.
-    phases = [[], [], []]
+    # Complete each connected ink component before moving elsewhere.
+    # The earlier global length phases left visible gaps in a contour while
+    # drawing unrelated details. 8-neighbour connectivity groups touching
+    # raster ink without inventing any new painted edges.
+    parent = {}
+    def root(point):
+        parent.setdefault(point, point)
+        while parent[point] != point:
+            parent[point] = parent[parent[point]]
+            point = parent[point]
+        return point
+    def union(a, b):
+        ra, rb = root(a), root(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+    for point in sorted(source_pixels):
+        root(point)
+        x, y = point
+        for dx, dy in ((-1, -1), (0, -1), (1, -1), (-1, 0)):
+            neighbor = (x + dx, y + dy)
+            if neighbor in source_pixels:
+                union(point, neighbor)
+    components = {}
     for size, points in plan:
-        distinct = len(set(map(tuple, points)))
-        phase = 0 if distinct >= 12 else (1 if distinct >= 5 else 2)
-        phases[phase].append((size, points))
-    phase_counts = [len(group) for group in phases]
+        key = root(tuple(points[0]))
+        components.setdefault(key, []).append((size, points))
+    # Largest connected outlines first. Finish each component (including
+    # its short branches) before starting the next component.
+    groups = sorted(components.values(),
+                    key=lambda g: (-len({tuple(p) for _, path in g for p in path}),
+                                   min(tuple(path[0]) for _, path in g)))
+    component_counts = [len(g) for g in groups]
     ordered = []
     cursor = None
-    for phase_index, group in enumerate(phases):
+    for group in groups:
+        # Begin with the longest contour in this component.
+        idx = max(range(len(group)), key=lambda i: len(group[i][1]))
+        size, points = group.pop(idx)
+        ordered.append((size, points))
+        cursor = points[-1]
         while group:
-            if cursor is None:
-                idx = max(range(len(group)), key=lambda i: len(group[i][1]))
-                reverse = False
-            else:
-                def travel(i):
-                    points = group[i][1]
-                    forward = (points[0][0]-cursor[0])**2 + (points[0][1]-cursor[1])**2
-                    backward = (points[-1][0]-cursor[0])**2 + (points[-1][1]-cursor[1])**2
-                    # Prefer a substantial line when travel distances are similar.
-                    return (min(forward, backward) - min(len(points), 20), -len(points), i)
-                idx = min(range(len(group)), key=travel)
-                points = group[idx][1]
-                forward = (points[0][0]-cursor[0])**2 + (points[0][1]-cursor[1])**2
-                backward = (points[-1][0]-cursor[0])**2 + (points[-1][1]-cursor[1])**2
-                reverse = backward < forward
+            def travel(i):
+                path = group[i][1]
+                forward = (path[0][0]-cursor[0])**2 + (path[0][1]-cursor[1])**2
+                backward = (path[-1][0]-cursor[0])**2 + (path[-1][1]-cursor[1])**2
+                return (min(forward, backward), -len(path), i)
+            idx = min(range(len(group)), key=travel)
             size, points = group.pop(idx)
-            if reverse:
+            forward = (points[0][0]-cursor[0])**2 + (points[0][1]-cursor[1])**2
+            backward = (points[-1][0]-cursor[0])**2 + (points[-1][1]-cursor[1])**2
+            if backward < forward:
                 points = points[::-1]
             ordered.append((size, points))
             cursor = points[-1]
@@ -247,9 +267,8 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     report = {'source_paths': len(selected_paths),
               'planned_strokes': len(plan),
               'joined_adjacent_trails': joined_trails,
-              'drawing_phases': {'long_contours': phase_counts[0],
-                                 'medium_contours': phase_counts[1],
-                                 'small_details_last': phase_counts[2]},
+              'ink_components': len(component_counts),
+              'largest_component_strokes': max(component_counts),
               'rejected_short_paths': rejected_short,
               'rejected_overlapping_paths': rejected_overlap,
               'minimum_stroke_pixels': min_stroke_pixels,
