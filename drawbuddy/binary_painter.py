@@ -152,9 +152,9 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
     steps = [{"name": "outer silhouette only", "tool": "stroke",
               "color": "black", "width": 1, "points": points}]
 
-    # Trace all 12 detected direct inner 0/1 boundaries, including
-    # the three larger head/body details. No gap closing or filling.
-    # Preserve the approved outer silhouette exactly.
+    # Preserve the approved exterior and all previously selected inner contours.
+    # Also trace independent black components and small enclosed details
+    # directly from the same 0/1 mask. No morphology, filling, or skeletons.
     all_contours, hierarchy = cv2.findContours(ink, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     if hierarchy is not None:
         tree = hierarchy[0]
@@ -163,19 +163,24 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
         candidates = [i for i, h in enumerate(tree)
                       if int(h[3]) == outer_index and cv2.contourArea(all_contours[i]) >= 20]
         candidates.sort(key=lambda i: cv2.contourArea(all_contours[i]), reverse=True)
-        for preview_number in (10, 12, 11, 9, 4, 5, 6, 7, 8, 1, 2, 3):
-            if len(candidates) < preview_number:
-                continue
-            detail = cv2.approxPolyDP(all_contours[candidates[preview_number - 1]],
-                                      epsilon=0.55, closed=True)
+        selected = [candidates[n - 1] for n in (10, 12, 11, 9, 4, 5, 6, 7, 8, 1, 2, 3)
+                    if len(candidates) >= n]
+        # Roots other than the approved silhouette are disconnected ink marks.
+        # Small holes can represent facial details; include them if measurable.
+        selected.extend(i for i, h in enumerate(tree)
+                        if i != outer_index and i not in selected
+                        and ((int(h[3]) == -1 and cv2.contourArea(all_contours[i]) >= 1)
+                             or (int(h[3]) == outer_index
+                                 and cv2.contourArea(all_contours[i]) >= 1)))
+        for index in selected:
+            detail = cv2.approxPolyDP(all_contours[index], epsilon=0.55, closed=True)
             detail_points = [[left + int(p[0][0]), top + int(p[0][1])] for p in detail]
             if len(detail_points) >= 3:
                 detail_points.append(detail_points[0])
-                steps.append({"name": f"INNER {preview_number} detail",
-                              "tool": "stroke", "color": "black", "width": 1,
-                              "points": detail_points})
-    return {"name": f"{source.stem}-outer-and-all-inner",
-            "mode": "binary-outer-and-all-inner",
+                steps.append({"name": f"binary detail {index}", "tool": "stroke",
+                              "color": "black", "width": 1, "points": detail_points})
+    return {"name": f"{source.stem}-all-binary-contours",
+            "mode": "binary-all-contours",
             "binary": {"zero": "white", "one": "black", "width": size[0],
                        "height": size[1], "outlines": len(steps), "fill_enabled": False},
             "steps": steps}
