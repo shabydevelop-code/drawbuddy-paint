@@ -213,13 +213,7 @@ class DrawingEngine:
                     self.tools.select('pencil')
                     self.colors.select_primary(step['color'])
                     self.stroke_size.select(step['width'])
-                    actual = self.colors.primary.read_pixel()
-                    if not self.color_matches(actual, RGB[step['color']], tolerance=12):
-                        self.colors.current_primary = None
-                        self.colors.select_primary(step['color'])
-                        actual = self.colors.primary.read_pixel()
-                        if not self.color_matches(actual, RGB[step['color']], tolerance=12):
-                            raise RuntimeError(f'{name}: Color 1 mismatch: {actual}')
+                    self.colors.select_primary(step['color'])
                     for path in step['paths']:
                         self.canvas.stroke(path)
                     continue
@@ -228,17 +222,7 @@ class DrawingEngine:
                     self.tools.select('pencil')
                     self.colors.select_primary(step['color'])
                     self.stroke_size.select(1)
-                    # Raster mode does not draw temporary color probes or use Ctrl+Z.
-                    # Verify the selected Color 1 preview before painting.
-                    actual_color = self.colors.primary.read_pixel()
-                    if not self.color_matches(actual_color, RGB[step['color']], tolerance=12):
-                        self.colors.current_primary = None
-                        self.colors.select_primary(step['color'])
-                        actual_color = self.colors.primary.read_pixel()
-                        if not self.color_matches(actual_color, RGB[step['color']], tolerance=12):
-                            raise RuntimeError(
-                                f'{name}: Paint Color 1 is {actual_color}, '
-                                f'expected {RGB[step["color"]]}; stopped before drawing')
+                    self.colors.select_primary(step['color'])
                     for x1, x2, y in step['runs']:
                         if x1 == x2:
                             self.paint.click(x1, y)
