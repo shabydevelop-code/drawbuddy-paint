@@ -3,3 +3,5 @@ __pycache__/
 paint-diagnostic.png
 drawings/*.json
 !drawings/.gitkeep
+output/*
+!output/dog.png

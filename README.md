@@ -1,32 +1,32 @@
-# DrawBuddy — Paint reference tracing
+# DrawBuddy — reference drawing in Microsoft Paint
 
-DrawBuddy traces linework from `assets/dog-reference.png` and draws it in classic Microsoft Paint using real mouse movements. It does not paste the reference into Paint.
+DrawBuddy converts source image linework to a drawing definition and reproduces it in classic Paint using mouse operations. No AI is used at runtime.
 
 ## Requirements
+Windows, classic Paint, Python, and Python packages `pyautogui`, `opencv-python`, `numpy`.
 
-Windows, Python, classic Paint, and `pyautogui`, `opencv-python`, `numpy` (plus existing project dependencies).
-
-## Run
-
-Open Paint maximized with a **new blank canvas** and the Home tab visible.
+## Main workflow
+Open Paint maximized on a blank canvas, with the Home tab visible.
 
 ```powershell
-python -m pip install opencv-python numpy
 python trace_reference.py assets/dog-reference.png
 python main.py dog --speed 2
 ```
 
-The generator writes `drawings/dog.json` and `drawings/dog-audit.json`. These are **generated working outputs**, not versioned drawing history. Regenerate them after pulling changes. The audit predicts enclosed regions but **does not guarantee that Paint's bucket will not leak**; inspect the actual drawing before coloring.
+The generated drawing definition is `drawings/dog.json` (local working output, not tracked in Git). Keep your working drawing definitions when cleaning local files.
 
-## Architecture
+## Optional working drawing builders
+- `build_closure_drawing.py`: conservative closure joins; outputs `drawings/dog-closure-test.json`.
+- `build_leak_drawing.py`: validated leak joins with optimized drawing order; outputs `drawings/dog-leak-test.json`.
+- `plan_reference_colors.py`: produces a color plan for review, not automatic coloring.
 
-- `trace_reference.py`: image ink mask, Zhang–Suen skeletonization, pixel-path tracing, source width analysis, conservative short-bridge repair, visual stroke order, raster connectivity audit, and JSON export; separated into OOP classes.
-- `drawbuddy/drawing_engine.py`: validated JSON execution.
-- `drawbuddy/components.py`: Paint tools, colors, stroke sizes and canvas.
-- `drawbuddy/controller.py`: actual mouse and keyboard interaction.
-- `drawbuddy/elements.py`: Paint UI coordinate registry.
-- `assets/dog-reference.png`: canonical source illustration.
+These builders retain their required geometry-validation modules. Do not delete a working drawing definition without checking which version you currently draw.
 
-Move the mouse to a screen corner for PyAutoGUI failsafe. The final drawing screenshot is saved as `paint-diagnostic.png`.
+## Core
+- `trace_reference.py`: source tracing and drawing JSON generation.
+- `drawing_sequence_planner.py`: stroke ordering.
+- `drawbuddy/`: Paint control, drawing engine, result publishing.
+- `main.py`: execution.
+- `output/dog.png`: latest published Paint screenshot.
 
-There is one active tracing script and no retained version-numbered scripts or legacy dog drawings on the current branch. Git commit history remains available.
+Experimental diagnostic scripts and diagnostic images have been removed from the current branch. Git history remains available.
