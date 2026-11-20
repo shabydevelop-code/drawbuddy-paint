@@ -456,8 +456,32 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     engine.paint.refresh_display()
 
 
+def calibrate_scene_pencil(speed):
+    """Four isolated pencil strokes to verify Paint ribbon width selection.
+
+    Intentionally does not alter the production dog drawing algorithm.
+    Run on a blank maximized Paint canvas and compare the four lines.
+    """
+    import time
+    engine = DrawingEngine(speed=speed)
+    engine.tools.select('pencil')
+    engine.colors.select_primary('black')
+    engine.tools.pencil.click()
+    engine.tools.current = 'pencil'
+    time.sleep(0.5)
+    print('Paint pencil calibration: four horizontal lines, top to bottom, sizes 1/2/3/4.')
+    for level in (1, 2, 3, 4):
+        engine.stroke_size.select(level)
+        time.sleep(0.35)
+        y = 190 + 42 * (level - 1)
+        engine.canvas.stroke([[310, y], [470, y]])
+        print(f'Pencil size {level}: y={y}')
+    print('Calibration complete. Check whether each line is visibly thicker than the one above.')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
+    parser.add_argument('--calibrate-pencil', action='store_true', help='Draw four Paint pencil width test lines (1..4) on a blank canvas')
     parser.add_argument('--scene-strokes', type=Path, help='Draw Scene Engine ink-strokes.json in Paint (experimental)')
     parser.add_argument('--scene-min-stroke-pixels', type=int, default=8, help='Minimum unique pixels per natural pen stroke (default 8; try 5 for detail)')
     parser.add_argument('--scene-validate-only', action='store_true', help='Validate planned pen paths without opening or touching Paint')
@@ -480,6 +504,13 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
+    if args.calibrate_pencil:
+        if args.drawing or args.scene_strokes or any((args.region_draw_source, args.region_source,
+                args.centerline_source, args.natural_source, args.continuous_source,
+                args.lineart_source, args.freehand_source, args.binary_source)):
+            parser.error('--calibrate-pencil cannot be combined with drawing sources')
+        calibrate_scene_pencil(args.speed if args.speed is not None else 20.0)
+        return
     if args.scene_strokes:
         if args.drawing or any((args.region_draw_source, args.region_source,
                 args.centerline_source, args.natural_source, args.continuous_source,
