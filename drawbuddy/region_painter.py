@@ -48,9 +48,25 @@ def build_region_outline_drawing(source):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     from .centerline_painter import _thin, _trace_all
     black = (gray < 105).astype(np.uint8)
-    ink = _trace_all(_thin(black), left, top)
-    # The source dark ink is not a region interface when a line is internal
-    # to a single color. Keep it as the last detail layer.
+    # Shared-region boundaries own their drawn pixels. Remove ONLY ink
+    # centerline segments already covered by those planned strokes, rather
+    # than redrawing the same outline in the facial-detail pass.
+    owned = np.zeros((h, w), dtype=np.uint8)
+    for path in outside + inside:
+        points = np.array(path, dtype=np.int32)
+        if len(points) >= 2:
+            cv2.polylines(owned, [points], False, 255, 1,
+                          lineType=cv2.LINE_8)
+    skeleton = _thin(black)
+    # A one-pixel tolerance accounts for cell-edge coordinates vs ink
+    # centerlines. It is deliberately local: other nearby facial strokes
+    # remain available for drawing.
+    covered = cv2.dilate(owned, np.ones((3, 3), np.uint8))
+    remaining = skeleton.copy()
+    remaining[covered != 0] = 0
+    ink = _trace_all(remaining, left, top) if np.any(remaining) else []
+    removed_ink_pixels = int(np.count_nonzero(skeleton) -
+                             np.count_nonzero(remaining))
     steps = []
     for name, paths in [('Exterior silhouette', outside),
                         ('Shared interior region boundaries', inside)]:
@@ -69,6 +85,7 @@ def build_region_outline_drawing(source):
             'region_drawing': {'outer_paths': len(outside),
                                'inner_paths': len(inside),
                                'ink_paths': len(ink),
+                               'removed_duplicate_ink_pixels': removed_ink_pixels,
                                'shared_edges': len(seen_edges),
                                'bucket_fill_enabled': False},
             'steps': steps}
