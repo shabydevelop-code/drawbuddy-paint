@@ -113,7 +113,8 @@ class DrawingEngine:
                     result.append(point)
         return result
 
-    def verify_fill_boundary(self, step):
+    @staticmethod
+    def verify_fill_boundary(step):
         """Check the mapped contour is raster-closed and seed is safely interior.
 
         A 1px Paint pencil line can leak diagonally; check connectivity on
@@ -123,29 +124,29 @@ class DrawingEngine:
             import cv2
             import numpy as np
         except ImportError as exc:
-            raise RuntimeError("Fill boundary validation requires opencv-python and numpy") from exc
+            raise ValueError("Fill boundary validation requires opencv-python and numpy") from exc
         points = step["points"]
         xs = [p[0] for p in points]
         ys = [p[1] for p in points]
         x0, y0 = min(xs)-3, min(ys)-3
         width, height = max(xs)-x0+4, max(ys)-y0+4
         if width < 8 or height < 8:
-            raise RuntimeError(f'{step["name"]}: mapped fill contour is too small')
+            raise ValueError(f'{step["name"]}: mapped fill contour is too small')
         mask = np.zeros((height, width), dtype=np.uint8)
         contour = np.array([[x-x0, y-y0] for x, y in points], dtype=np.int32)
         cv2.polylines(mask, [contour], True, 255, 1, lineType=cv2.LINE_8)
         seed = (step["fill_point"][0]-x0, step["fill_point"][1]-y0)
         if not (1 <= seed[0] < width-1 and 1 <= seed[1] < height-1):
-            raise RuntimeError(f'{step["name"]}: fill seed outside mapped contour')
+            raise ValueError(f'{step["name"]}: fill seed outside mapped contour')
         if mask[seed[1], seed[0]]:
-            raise RuntimeError(f'{step["name"]}: fill seed falls on outline')
+            raise ValueError(f'{step["name"]}: fill seed falls on outline')
         free = (mask == 0).astype(np.uint8)
         count, labels, stats, _ = cv2.connectedComponentsWithStats(free, 4)
         region = labels[seed[1], seed[0]]
         if region == 0 or region == labels[0, 0]:
-            raise RuntimeError(f'{step["name"]}: fill seed leaks to exterior')
+            raise ValueError(f'{step["name"]}: fill seed leaks to exterior')
         if stats[region, cv2.CC_STAT_AREA] < 12:
-            raise RuntimeError(f'{step["name"]}: fill interior too small')
+            raise ValueError(f'{step["name"]}: fill interior too small')
         return True
 
     def verify_pencil_color(self, color):
@@ -188,7 +189,11 @@ class DrawingEngine:
                 name, tool = step['name'], step['tool']
                 if tool in ('stroke', 'closed_path'):
                     if tool == 'closed_path':
-                        self.verify_fill_boundary(step)
+                        try:
+                            self.verify_fill_boundary(step)
+                        except ValueError as exc:
+                            print(f'  SKIP unsafe fill {name}: {exc}')
+                            continue
                     print(f'\n{index}/{len(steps)} {name}: {tool}, outline={step["color"]}')
                     self.tools.select('pencil')
                     self.colors.select_primary(step['color'])
