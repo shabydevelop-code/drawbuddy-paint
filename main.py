@@ -152,6 +152,39 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     duplicate_pixels = 0
     if not plan:
         raise ValueError('No drawable paths after mapping')
+    # Merge adjacent graph trails into one physical mouse gesture whenever
+    # their endpoints coincide. No invented connecting segment is permitted.
+    # Paint currently uses a constant pencil width, so size labels do not
+    # constrain joins. This reduces visible gaps during drawing without
+    # changing the final set of ink pixels.
+    original_trail_count = len(plan)
+    trails = [points for _, points in plan]
+    while True:
+        endpoints = {}
+        for i, points in enumerate(trails):
+            if points is None:
+                continue
+            endpoints.setdefault(tuple(points[0]), []).append((i, 0))
+            endpoints.setdefault(tuple(points[-1]), []).append((i, 1))
+        merged = False
+        for point in sorted(endpoints):
+            entries = endpoints[point]
+            pair = next(((a, b) for k, a in enumerate(entries)
+                         for b in entries[k + 1:] if a[0] != b[0]), None)
+            if pair is None:
+                continue
+            (i, side_i), (j, side_j) = pair
+            first = trails[i] if side_i == 1 else trails[i][::-1]
+            second = trails[j] if side_j == 0 else trails[j][::-1]
+            assert first[-1] == second[0]
+            trails[i] = first + second[1:]
+            trails[j] = None
+            merged = True
+            break
+        if not merged:
+            break
+    plan = [(1, points) for points in trails if points is not None]
+    joined_trails = original_trail_count - len(plan)
     # Visual-first schedule: outline-like long gestures first, medium
     # contours next, isolated short details last. Do not sort by pencil
     # width: that previously brought hundreds of small size-1 dots forward.
@@ -213,6 +246,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
     width_counts = {str(size): sum(level == size for level, _ in plan) for size in (1, 2, 3, 4)}
     report = {'source_paths': len(selected_paths),
               'planned_strokes': len(plan),
+              'joined_adjacent_trails': joined_trails,
               'drawing_phases': {'long_contours': phase_counts[0],
                                  'medium_contours': phase_counts[1],
                                  'small_details_last': phase_counts[2]},
