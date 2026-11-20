@@ -586,6 +586,79 @@ def raster_drawing(source, output, pixel_step=2):
     print(f"Created {output}: {len(steps)} batches; no bucket fills")
 
 
+
+def vector_painter(source, output):
+    """Region-based brush coverage followed by original vector-like ink strokes.
+
+    This is a brush-stroke approximation, not an SVG renderer. No bucket fills.
+    """
+    from drawbuddy.components import RGB
+    image = cv2.imread(str(source), cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(source)
+    h, w = image.shape[:2]
+    scale = min(520 / w, 365 / h)
+    target_w, target_h = max(1, round(w * scale)), max(1, round(h * scale))
+    reduced = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
+    rgb = cv2.cvtColor(reduced, cv2.COLOR_BGR2RGB).astype(np.int16)
+    left = 310 + (520 - target_w) // 2
+    top = 155 + (365 - target_h) // 2
+    # Paint's size-4 pencil is a broad stroke. Erode coverage so that it
+    # stays inside the color region and the fine contours remain visible.
+    brush_width = 4
+    row_stride = 5
+    palette = np.array(list(RGB.values()), dtype=np.int16)
+    names = list(RGB)
+    diff = np.max(np.abs(rgb[:, :, None, :] - palette[None, None, :, :]), axis=3)
+    nearest = np.argmin(np.sum((rgb[:, :, None, :] - palette[None, None, :, :]) ** 2, axis=3), axis=2)
+    valid = np.min(diff, axis=2) <= 65
+    dark = np.max(rgb, axis=2) < 100
+    nearest[dark] = names.index("black")
+    valid |= dark
+    brush_steps = []
+    for index, name in enumerate(names):
+        if name == "black":
+            continue
+        mask = ((nearest == index) & valid).astype(np.uint8)
+        # Filter speckle islands; retain contiguous source-derived shapes.
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        clean = np.zeros_like(mask)
+        for region in range(1, count):
+            if stats[region, cv2.CC_STAT_AREA] >= 24:
+                clean[labels == region] = 1
+        interior = cv2.erode(clean, np.ones((5, 5), np.uint8), iterations=1)
+        paths = []
+        for y in range(2, target_h - 2, row_stride):
+            x = 0
+            while x < target_w:
+                if not interior[y, x]:
+                    x += 1
+                    continue
+                start = x
+                while x + 1 < target_w and interior[y, x + 1]:
+                    x += 1
+                if x - start >= 3:
+                    paths.append([[left + start, top + y], [left + x, top + y]])
+                x += 1
+        for start in range(0, len(paths), 100):
+            brush_steps.append({
+                "name": f"Brush {name} {start // 100 + 1:03d}",
+                "tool": "brush_paths", "color": name, "width": brush_width,
+                "paths": paths[start:start + 100]})
+        print(f"Brush {name}: {len(paths)} region-interior paths")
+    # Preserve the established contour extraction, independent of color coverage.
+    ReferenceTracingPipeline().run(source, output)
+    original = json.loads(output.read_text(encoding="utf-8"))
+    steps = brush_steps + original["steps"]
+    output.write_text(json.dumps({
+        "name": f"Vector-style painter from {source.name}",
+        "steps": steps,
+        "painter": {"method": "region brush strokes + contour pass",
+                    "palette": names, "brush_width": brush_width}
+    }, indent=2), encoding="utf-8")
+    print(f"Created {output}: {len(brush_steps)} brush batches + {len(original['steps'])} contour paths")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fast reference tracing")
     parser.add_argument("image", type=Path)
@@ -594,10 +667,14 @@ def main():
     parser.add_argument("--min-length", type=int, default=2)
     parser.add_argument("--fill-solid-ink", action="store_true", help="Include isolated closed solid ink regions; excludes holes and connected outlines")
     parser.add_argument("--region-map", action="store_true", help="Store recolored connected regions and original RGB in JSON metadata")
+    parser.add_argument("--vector-painter", action="store_true", help="Paint region interiors with broad brush strokes, then restore ink contours")
     parser.add_argument("--raster", action="store_true", help="Draw indexed pixel masks as horizontal Paint strokes, without bucket fills")
     parser.add_argument("--pixel-step", type=int, choices=(1, 2, 3), default=2)
     parser.add_argument("--paint-fills", action="store_true", help="Generate safe fills for calibrated Paint colors before original strokes")
     args = parser.parse_args()
+    if args.vector_painter:
+        vector_painter(args.image, args.output)
+        return
     if args.raster:
         raster_drawing(args.image, args.output, args.pixel_step)
         return
