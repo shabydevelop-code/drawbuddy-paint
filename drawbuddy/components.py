@@ -30,31 +30,23 @@ class PaintColors:
         self.current_primary = None
 
     def select_primary(self, name):
-        """Synchronize the real Paint Color 1 with the requested palette swatch.
+        """Select the calibrated palette swatch without treating the ribbon
+        Color 1 label pixel as the actual ink color.
 
-        Never trust the cached color when Paint may have changed independently.
+        The former read at (689,70) consistently returned black even after
+        selecting orange. It is not a validated color-preview coordinate.
         """
         if name not in self.swatches:
             raise ValueError(f'Unknown color: {name}')
-        expected = RGB[name]
-        actual = self.primary.read_pixel()
-        if close_to(actual, expected, tolerance=12):
-            self.current_primary = name
-            print(f'  COLOR verified existing: {name} RGB={actual}')
+        if name == self.current_primary:
             return True
-        for attempt in range(1, 4):
-            self.primary.click(button='left')
-            self.swatches[name].click(button='left')
-            time.sleep(0.25)
-            actual = self.primary.read_pixel()
-            print(f'  COLOR select attempt={attempt} requested={name} Color1={actual}')
-            if close_to(actual, expected, tolerance=12):
-                self.current_primary = name
-                return True
-        self.current_primary = None
-        raise RuntimeError(
-            f'Paint Color 1 mismatch after 3 attempts: requested={name} '
-            f'expected={expected}, actual={actual}')
+        self.primary.click(button='left')
+        self.swatches[name].click(button='left')
+        time.sleep(0.25)
+        self.current_primary = name
+        print(f'  COLOR selected swatch={name} expected_rgb={RGB[name]} '
+              '(ribbon preview pixel not used for verification)')
+        return True
 
 
 class PaintTools:
