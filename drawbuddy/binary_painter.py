@@ -149,9 +149,29 @@ def build_outline_drawing(source, max_width=500, max_height=350, threshold=None)
     if len(points) < 3:
         raise ValueError("Exterior contour has fewer than three points")
     points.append(points[0])
-    return {"name": f"{source.stem}-outer-silhouette",
-            "mode": "binary-outer-silhouette-only",
+    steps = [{"name": "outer silhouette only", "tool": "stroke",
+              "color": "black", "width": 1, "points": points}]
+
+    # Experimental single-detail test: the 10th largest direct inner
+    # contour, matching INNER 10 in preview_inner_contours.py.
+    # Do not alter the approved exterior silhouette.
+    all_contours, hierarchy = cv2.findContours(ink, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    if hierarchy is not None:
+        tree = hierarchy[0]
+        roots = [i for i, h in enumerate(tree) if int(h[3]) == -1]
+        outer_index = max(roots, key=lambda i: cv2.contourArea(all_contours[i]))
+        candidates = [i for i, h in enumerate(tree)
+                      if int(h[3]) == outer_index and cv2.contourArea(all_contours[i]) >= 20]
+        candidates.sort(key=lambda i: cv2.contourArea(all_contours[i]), reverse=True)
+        if len(candidates) >= 10:
+            detail = cv2.approxPolyDP(all_contours[candidates[9]], epsilon=0.55, closed=True)
+            detail_points = [[left + int(p[0][0]), top + int(p[0][1])] for p in detail]
+            if len(detail_points) >= 3:
+                detail_points.append(detail_points[0])
+                steps.append({"name": "INNER 10 eye detail", "tool": "stroke",
+                              "color": "black", "width": 1, "points": detail_points})
+    return {"name": f"{source.stem}-outer-and-inner-10",
+            "mode": "binary-outer-and-inner-10",
             "binary": {"zero": "white", "one": "black", "width": size[0],
-                       "height": size[1], "outlines": 1, "fill_enabled": False},
-            "steps": [{"name": "outer silhouette only", "tool": "stroke",
-                       "color": "black", "width": 1, "points": points}]}
+                       "height": size[1], "outlines": len(steps), "fill_enabled": False},
+            "steps": steps}
