@@ -18,7 +18,7 @@ from drawbuddy.binary_painter import build_binary_drawing, build_region_drawing,
 
 
 
-def draw_scene_strokes(path, speed, limit=None, validate_only=False):
+def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_pixels=8):
     """Draw the Scene Engine's actual variable-width ink paths in Paint.
 
     Scene coordinates are mapped into the calibrated 240x180 Paint canvas
@@ -43,7 +43,8 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False):
     duplicate_pixels = 0
     rejected_short = 0
     rejected_overlap = 0
-    min_stroke_pixels = 8
+    if not 2 <= min_stroke_pixels <= 100:
+        raise ValueError('--scene-min-stroke-pixels must be between 2 and 100')
 
     def pixels_between(a, b):
         x0, y0 = a
@@ -178,6 +179,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False):
 def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
     parser.add_argument('--scene-strokes', type=Path, help='Draw Scene Engine ink-strokes.json in Paint (experimental)')
+    parser.add_argument('--scene-min-stroke-pixels', type=int, default=8, help='Minimum unique pixels per natural pen stroke (default 8; try 5 for detail)')
     parser.add_argument('--scene-validate-only', action='store_true', help='Validate planned pen paths without opening or touching Paint')
     parser.add_argument('--scene-limit', type=int, default=None, help='Limit Scene Engine source paths for a short Paint test')
     parser.add_argument('drawing', nargs='?', help='Drawing name (e.g. dog), without .json')
@@ -208,8 +210,10 @@ def main():
         speed = args.speed if args.speed is not None else config.get('drawing_speed', 1.0)
         if type(speed) not in (float, int) or not math.isfinite(speed) or not 0 < speed <= 100:
             parser.error('drawing speed must be greater than 0 and at most 100')
-        draw_scene_strokes(args.scene_strokes, float(speed), args.scene_limit, args.scene_validate_only)
+        draw_scene_strokes(args.scene_strokes, float(speed), args.scene_limit, args.scene_validate_only, args.scene_min_stroke_pixels)
         return
+    if args.scene_min_stroke_pixels != 8:
+        parser.error('--scene-min-stroke-pixels requires --scene-strokes')
     if args.scene_validate_only:
         parser.error('--scene-validate-only requires --scene-strokes')
     if args.scene_limit is not None:
