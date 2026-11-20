@@ -151,6 +151,57 @@ class ColorPathOverlapFilter:
         return accepted
 
 
+class SolidInkContourExtractor:
+    """Find isolated, broad ink components that can safely be bucket-filled.
+
+    Uses source pixels and geometry, not object labels. Connected thick
+    outlines and regions with internal holes are intentionally excluded.
+    """
+
+    def __init__(self, min_area=90, min_radius=4.0, min_compactness=0.12):
+        self.min_area = min_area
+        self.min_radius = min_radius
+        self.min_compactness = min_compactness
+
+    def extract(self, ink):
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(
+            ink.astype(np.uint8), connectivity=8)
+        h, w = ink.shape
+        results = []
+        for component in range(1, count):
+            x, y, width, height, area = map(int, stats[component])
+            if area < self.min_area or x == 0 or y == 0 or x + width >= w or y + height >= h:
+                continue
+            region = (labels[y:y+height, x:x+width] == component).astype(np.uint8)
+            distance = cv2.distanceTransform(region, cv2.DIST_L2, 5)
+            _, radius, _, seed = cv2.minMaxLoc(distance)
+            if radius < self.min_radius:
+                continue
+            contours, hierarchy = cv2.findContours(
+                region.copy(), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+            if hierarchy is None:
+                continue
+            outer = [i for i, row in enumerate(hierarchy[0]) if row[3] == -1]
+            if len(outer) != 1:
+                continue
+            i = outer[0]
+            # Filling a contour with holes would erase source highlights.
+            if hierarchy[0][i][2] != -1:
+                continue
+            contour = contours[i]
+            perimeter = cv2.arcLength(contour, True)
+            compactness = 4 * np.pi * cv2.contourArea(contour) / max(1.0, perimeter ** 2)
+            if compactness < self.min_compactness:
+                continue
+            approx = cv2.approxPolyDP(contour, 0.65, True).reshape(-1, 2)
+            if len(approx) < 3:
+                continue
+            points = [[int(px+x), int(py+y)] for px, py in approx]
+            seed_point = [int(seed[0]+x), int(seed[1]+y)]
+            results.append((points, seed_point))
+        return results
+
+
 class ZhangSuenThinner:
     """Reduce thick ink to one-pixel centerlines without extra dependencies."""
 
@@ -263,7 +314,18 @@ class ReferenceTracingPipeline:
         self.tracer = SkeletonPathTracer(min_length)
         self.mapper = PaintCanvasMapper()
 
-    def run(self, source, output):
+    @staticmethod
+    def _point_inside(point, vertices):
+        x, y = point
+        inside = False
+        for a, b in zip(vertices, vertices[1:] + vertices[:1]):
+            if (a[1] > y) != (b[1] > y):
+                crossing = a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1])
+                if x < crossing:
+                    inside = not inside
+        return inside
+
+    def run(self, source, output, fill_solid_ink=False):
         mask = self.ink.from_image(source)
         paths = self.tracer.trace(self.thinner.thin(mask))
         color_mask, region_count = self.color_regions.extract(source, mask)
@@ -281,6 +343,29 @@ class ReferenceTracingPipeline:
             for i, points in enumerate(mapped)
             if len(set(map(tuple, points))) >= 2
         ]
+        if fill_solid_ink:
+            solid_regions = SolidInkContourExtractor().extract(mask)
+            if solid_regions:
+                mapped_regions = self.mapper.map(
+                    combined + [points for points, _ in solid_regions] +
+                    [[seed] for _, seed in solid_regions])
+                region_paths = mapped_regions[len(combined):len(combined)+len(solid_regions)]
+                region_seeds = mapped_regions[len(combined)+len(solid_regions):]
+                fills = []
+                for i, (points, seed) in enumerate(zip(region_paths, region_seeds), 1):
+                    if len(set(map(tuple, points))) < 3:
+                        continue
+                    if not all(v >= 0 for p in points for v in p):
+                        continue
+                    if not self._point_inside(seed[0], points):
+                        continue
+                    fills.append({"name": f"Solid ink region {i:03d}",
+                                  "tool": "closed_path", "color": "black",
+                                  "fill": "black", "smooth": False, "width": 1,
+                                  "points": points, "fill_point": seed[0]})
+                # Draw fills first; original stroke geometry stays unchanged.
+                steps = fills + steps
+            print(f"Source-derived isolated solid regions: {len(solid_regions)}")
         if not steps:
             raise ValueError("No drawable strokes")
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -296,9 +381,10 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("drawings/dog.json"))
     parser.add_argument("--threshold", type=int, default=95)
     parser.add_argument("--min-length", type=int, default=2)
+    parser.add_argument("--fill-solid-ink", action="store_true", help="Include isolated closed solid ink regions; excludes holes and connected outlines")
     args = parser.parse_args()
     ReferenceTracingPipeline(args.threshold, args.min_length).run(
-        args.image, args.output)
+        args.image, args.output, fill_solid_ink=args.fill_solid_ink)
 
 
 if __name__ == "__main__":
