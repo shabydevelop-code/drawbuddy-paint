@@ -52,8 +52,8 @@ class ClosureDrawingBuilder:
                 step["smooth"] = False
         if remaining or integrated != len(accepted):
             raise ValueError(f"Unmatched closure endpoints: {sorted(remaining)}")
-        updated, zones = DrawingSequencePlanner().plan(updated)
-        print('Drawing order: ' + ' -> '.join(f'{name} ({count})' for name, count in zones.items()))
+        updated, statistics = DrawingSequencePlanner().plan(updated)
+        print(f'Generic sequence: {statistics["groups"]} geometric groups, {statistics["strokes"]} strokes')
         return updated, len(accepted), len(rejected)
 
     def run(self, source, output):
