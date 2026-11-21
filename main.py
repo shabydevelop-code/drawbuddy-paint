@@ -500,10 +500,41 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             missing = int(np.count_nonzero(
                 core & np.any(actual != 255,axis=2)))
             if missing:
-                print(f'NESTED WHITE HIGHLIGHT WARNING '
+                # A tiny glint can be narrower than Paint's Bucket seed.
+                # Repair only the verified missing white interior with Pencil;
+                # never retry Bucket on a possibly open dark region.
+                missing_mask = core & np.any(actual != 255,axis=2)
+                repair_runs = []
+                for y in np.flatnonzero(np.any(missing_mask,axis=1)):
+                    xs = np.flatnonzero(missing_mask[y])
+                    for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1):
+                        repair_runs.append((int(y),int(run[0]),int(run[-1])))
+                print(f'NESTED WHITE HIGHLIGHT PENCIL REPAIR '
                       f'{index}/{len(white_after_ink)}: '
-                      f'{missing} interior pixels remain; continuing drawing',
-                      flush=True)
+                      f'{missing} pixels, {len(repair_runs)} runs',flush=True)
+                if len(repair_runs) <= 100:
+                    engine.tools.select('pencil')
+                    engine.stroke_size.select(1)
+                    for y,x0,x1 in repair_runs:
+                        check_cancel()
+                        points = [(left+x0,top+y),(left+x1,top+y)]
+                        engine.paint.validate_canvas_points(points)
+                        engine.paint.stroke(points if x0 != x1 else points*2,
+                                            duration=0.008)
+                    screenshot = pg.screenshot()
+                    actual = np.asarray(
+                        screenshot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+                    missing = int(np.count_nonzero(
+                        core & np.any(actual != 255,axis=2)))
+                if missing:
+                    print(f'NESTED WHITE HIGHLIGHT WARNING '
+                          f'{index}/{len(white_after_ink)}: '
+                          f'{missing} interior pixels remain; continuing drawing',
+                          flush=True)
+                else:
+                    print(f'NESTED WHITE HIGHLIGHT COMPLETE '
+                          f'{index}/{len(white_after_ink)} after Pencil repair',
+                          flush=True)
             else:
                 print(f'NESTED WHITE HIGHLIGHT COMPLETE '
                       f'{index}/{len(white_after_ink)}',flush=True)
