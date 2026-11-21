@@ -186,9 +186,6 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     print(f'BUCKET WIDTH CHECK: {len(narrow_regions)} components have no '
           '3x3 free interior after boundaries; all other enclosed '
           'components retain Bucket candidates',flush=True)
-    if diagnostic_only:
-        print(f'DIAGNOSTIC ONLY COMPLETE: no Paint launched; files={output}',flush=True)
-        return
     print('Open a NEW blank white maximized Paint canvas. F8 cancels.',flush=True)
     planning_seconds = time.perf_counter() - stage_clock
     stage_clock = time.perf_counter()
@@ -1031,6 +1028,9 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     print(f'BUCKET WIDTH CHECK: {len(narrow_regions)} components have no '
           '3x3 free interior after boundaries; all other enclosed '
           'components retain Bucket candidates',flush=True)
+    if diagnostic_only:
+        print(f'DIAGNOSTIC ONLY COMPLETE: no Paint launched; files={output}',flush=True)
+        return
     print('Open a NEW blank white maximized Paint canvas. F8 cancels.',flush=True)
     planning_seconds = time.perf_counter() - stage_clock
     stage_clock = time.perf_counter()
