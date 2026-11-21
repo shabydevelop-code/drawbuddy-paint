@@ -714,6 +714,29 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     batch_order = sorted(color_batches,
                          key=lambda rgb:(rgb == (255,255,255),
                                          -sum(r['area'] for r in color_batches[rgb])))
+    # A white highlight INSIDE dark ink must be painted after that ink,
+    # while dark pupils INSIDE white remain part of the final ink pass.
+    # Detect containment from source geometry, not a global color ranking.
+    dark_mask = np.zeros((h,w),np.uint8)
+    for ink_rgb,ink_mask in groups:
+        if max(ink_rgb) <= 24:
+            dark_mask = cv2.bitwise_or(dark_mask,ink_mask)
+    dark_boundaries,_ = cv2.findContours(
+        dark_mask,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+    white_after_ink = []
+    for region in color_batches.get((255,255,255),[]):
+        x,y = region['seed']
+        if any(cv2.pointPolygonTest(contour,(float(x),float(y)),False)>0
+               for contour in dark_boundaries):
+            white_after_ink.append(region)
+    if white_after_ink:
+        color_batches[(255,255,255)] = [
+            region for region in color_batches[(255,255,255)]
+            if all(region is not highlight for highlight in white_after_ink)]
+        batch_order = [rgb for rgb in batch_order
+                       if color_batches.get(rgb)]
+    print(f'NESTED LAYERS: {len(white_after_ink)} white highlights '
+          'scheduled after dark ink',flush=True)
     print(f'DRAW STAGE 2/3: COMPLETE REGIONS BY COLOR '
           f'({len(batch_order)} colors, {len(regions)} regions)',flush=True)
     for rgb in batch_order:
@@ -876,6 +899,41 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                                     duration=0.012)
                 black_strokes += 1
     print(f'FINAL INK COMPLETE: {black_strokes} contour strokes',flush=True)
+    # Last nested layer: white glints inside black eyes. Keep them after
+    # the dark ink pass; do not globally paint white before black.
+    if white_after_ink:
+        if previous_rgb != (255,255,255):
+            engine.colors.select_rgb((255,255,255))
+            previous_rgb = (255,255,255)
+            color_switches += 1
+        for index,region in enumerate(white_after_ink,1):
+            check_cancel()
+            engine.tools.select('pencil')
+            engine.stroke_size.select(1)
+            for path in region['paths']:
+                mapped = [(left+x,top+y) for x,y in path]
+                engine.paint.validate_canvas_points(mapped)
+                engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
+                                    duration=0.012)
+            seed = region['seed']
+            fill_point = (left+seed[0],top+seed[1])
+            engine.paint.validate_canvas_points([fill_point])
+            engine.tools.select('bucket')
+            engine.canvas.fill(*fill_point)
+            sx,sy = engine.paint.point(left,top)
+            screenshot = pg.screenshot()
+            actual = np.asarray(
+                screenshot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+            core = cv2.erode(region['mask'],
+                             np.ones((3,3),np.uint8)) != 0
+            missing = int(np.count_nonzero(
+                core & np.any(actual != 255,axis=2)))
+            if missing:
+                raise RuntimeError(
+                    f'White highlight {index}/{len(white_after_ink)} '
+                    f'incomplete: {missing} interior pixels; not advancing.')
+            print(f'NESTED WHITE HIGHLIGHT COMPLETE '
+                  f'{index}/{len(white_after_ink)}',flush=True)
     narrow_strokes = 0
     narrow_skipped = len(narrow_regions)
     narrow_budget = 0
