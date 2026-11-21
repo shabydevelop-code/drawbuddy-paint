@@ -729,13 +729,37 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                 expected = np.asarray(rgb,dtype=np.uint8)
                 # A final ink pass may overlay some boundary pixels, but
                 # a filled region's interior must already match its color.
-                wrong = int(np.count_nonzero(
-                    core & np.any(actual != expected,axis=2)))
+                mismatch = core & np.any(actual != expected,axis=2)
+                wrong = int(np.count_nonzero(mismatch))
                 if wrong:
-                    raise RuntimeError(
-                        f'Incomplete region {index}/{len(batch)} '
-                        f'for color {rgb}: {wrong} interior pixels differ. '
-                        'Stopped before advancing to the next region.')
+                    # Only repair a genuinely tiny, verified interior defect.
+                    # Larger failures indicate an incorrect boundary or fill;
+                    # do not disguise them with raster drawing.
+                    if wrong > 16:
+                        raise RuntimeError(
+                            f'Incomplete region {index}/{len(batch)} '
+                            f'for color {rgb}: {wrong} interior pixels differ. '
+                            'Boundary/fill needs correction; not advancing.')
+                    print(f'LOCAL REGION REPAIR: {wrong} pixels for '
+                          f'color {rgb}, region {index}/{len(batch)}',flush=True)
+                    engine.tools.select('pencil')
+                    engine.stroke_size.select(1)
+                    ys,xs = np.where(mismatch)
+                    for y,x in zip(ys,xs):
+                        check_cancel()
+                        point = (left+int(x),top+int(y))
+                        engine.paint.validate_canvas_points([point])
+                        engine.paint.stroke([point,point],duration=0.012)
+                    screenshot = pg.screenshot()
+                    actual = np.asarray(
+                        screenshot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+                    remaining = int(np.count_nonzero(
+                        core & np.any(actual != expected,axis=2)))
+                    if remaining:
+                        raise RuntimeError(
+                            f'Region {index}/{len(batch)} color {rgb}: '
+                            f'{remaining} interior pixels still differ '
+                            'after localized repair; not advancing.')
             completed += 1
             print(f'  REGION COMPLETE {index}/{len(batch)} '
                   f'color={rgb}',flush=True)
