@@ -474,23 +474,37 @@ def draw_full_dog_bucket(plan_path, speed):
             or not isinstance(w,int) or not isinstance(h,int)
             or not 1 <= w <= 500 or not 1 <= h <= 547):
         raise ValueError('Invalid 16-color pixel plan')
+    # White is implicit canvas background. The stroke plan may omit its runs;
+    # do not require one explicit group entry for every pixel.
     source = np.full((h,w,3),255,np.uint8)
     groups = []
+    occupied = np.zeros((h,w),np.uint8)
     for group in data['groups']:
-        rgb = tuple(bytes.fromhex(group['rgb'][1:]))
+        color = group.get('rgb')
+        if not isinstance(color,str) or len(color) != 7 or not color.startswith('#'):
+            raise ValueError('Invalid RGB color in plan')
+        try:
+            rgb = tuple(bytes.fromhex(color[1:]))
+        except ValueError as exc:
+            raise ValueError('Invalid RGB color in plan') from exc
         mask = np.zeros((h,w),np.uint8)
         for x0,y0,x1,y1 in group['strokes']:
             if not 0 <= x0 <= x1 < w or not 0 <= y0 == y1 < h:
                 raise ValueError('Invalid run')
             mask[y0,x0:x1+1] = 255
-            source[y0,x0:x1+1] = rgb[::-1]
+        # Explicit white runs, when present, are background, not paint work.
+        if rgb == (255,255,255):
+            continue
+        overlap = (occupied != 0) & (mask != 0)
+        if np.any(overlap):
+            raise ValueError(f'Overlapping nonwhite color regions: {color}')
+        occupied[mask != 0] = 1
+        source[mask != 0] = rgb[::-1]
         groups.append((rgb,mask))
-    # Every pixel must belong to precisely one group, including background.
-    coverage = np.zeros((h,w),np.uint8)
-    for _,mask in groups:
-        coverage += (mask != 0).astype(np.uint8)
-    if not np.all(coverage == 1):
-        raise ValueError('Source color masks overlap or leave uncovered pixels')
+    # Include the implicit white pixels so enclosed white regions can be
+    # recovered by the contour/bucket planner when necessary.
+    white_mask = np.uint8(occupied == 0)*255
+    groups.append(((255,255,255),white_mask))
     regions = []
     for rgb,mask in groups:
         # Background white is already present; enclosed white islands must
