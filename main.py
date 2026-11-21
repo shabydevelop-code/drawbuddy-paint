@@ -462,7 +462,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
 
 
 
-def draw_full_dog_bucket(plan_path, speed):
+def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500):
     """Full image: all color components, closed contours, Paint bucket, no raster strokes."""
     import time
     startup_clock = time.perf_counter()
@@ -686,6 +686,50 @@ def draw_full_dog_bucket(plan_path, speed):
             engine.paint.stroke(mapped,duration=0.012)
         if i % 50 == 0:
             print(f'  Details: {i}/{len(details)}')
+    finish_stats = {'enabled':bool(pixel_finish),'planned_strokes':0,
+                    'attempted_strokes':0,'limited':False}
+    if pixel_finish:
+        import pyautogui as pg
+        sx,sy = engine.paint.point(left,top)
+        screenshot = pg.screenshot()
+        if sx < 0 or sy < 0 or sx+w > screenshot.width or sy+h > screenshot.height:
+            raise RuntimeError('Pixel finish crop outside display')
+        actual = np.asarray(screenshot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+        target = cv2.cvtColor(source,cv2.COLOR_BGR2RGB)
+        different = np.any(actual != target,axis=2)
+        errors = int(np.count_nonzero(different))
+        finish_stats['initial_error_pixels'] = errors
+        finish_stats['initial_exact_match_percent'] = round(100*(1-errors/(w*h)),4)
+        jobs = []
+        for rgb in sorted({tuple(int(v) for v in target[y,x])
+                           for y,x in zip(*np.where(different))}):
+            color_mask = different & np.all(target == np.asarray(rgb,np.uint8),axis=2)
+            for y in range(h):
+                xs = np.flatnonzero(color_mask[y])
+                if len(xs):
+                    for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1):
+                        jobs.append((rgb,int(y),int(run[0]),int(run[-1])))
+        finish_stats['planned_strokes'] = len(jobs)
+        finish_stats['limited'] = len(jobs) > finish_limit
+        print(f'PIXEL FINISH: {errors} errors; {len(jobs)} planned strokes; limit={finish_limit}',flush=True)
+        engine.stroke_size.select(1)
+        for index,(rgb,y,x0,x1) in enumerate(jobs[:finish_limit],1):
+            check_cancel()
+            if rgb != previous_rgb:
+                engine.colors.select_rgb(rgb)
+                previous_rgb = rgb
+                color_switches += 1
+            engine.tools.select('pencil')
+            pts = [(left+x0,top+y),(left+x1,top+y)]
+            engine.paint.validate_canvas_points(pts)
+            if x0 == x1:
+                engine.canvas.fill(*pts[0])
+            else:
+                engine.paint.stroke(pts,duration=0.008)
+            finish_stats['attempted_strokes'] = index
+            if index % 100 == 0:
+                print(f'PIXEL FINISH: {index}/{min(len(jobs),finish_limit)}',flush=True)
+        print('PIXEL FINISH: verifying final image',flush=True)
     report = compare_paint_canvas(engine.paint,output/'expected.png',
                                   w,h,left,top,output=output,tolerance=0)
     report['test'] = 'full dog: color boundaries separate from black source-pixel ink'
@@ -709,6 +753,7 @@ def draw_full_dog_bucket(plan_path, speed):
     report['repair_method'] = 'direct pencil for narrow regions; bucket for broad regions; no intermediate screenshots'
     report['elapsed_seconds'] = round(time.perf_counter()-started,3)
     report['startup_timing'] = startup_timings
+    report['pixel_finish'] = finish_stats
     (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(f'FULL DOG DONE: exact match={report["exact_pixel_match_percent"]}%, '
           f'errors={report["error_pixels"]}; output={output}')
@@ -1219,6 +1264,8 @@ def main():
     parser.add_argument('--region-bucket-test', type=Path, help='Outline one real closed color region and fill it with Paint bucket')
     parser.add_argument('--neighbor-regions-test', type=Path, help='Draw and bucket-fill nearby distinct color regions')
     parser.add_argument('--full-dog-bucket', type=Path, help='Draw entire color pixel map with closed contours and bucket fills')
+    parser.add_argument('--pixel-perfect-finish', action='store_true', help='Experimental pixel print correction after drawing')
+    parser.add_argument('--pixel-finish-limit', type=int, default=1500, help='Maximum finishing strokes')
     parser.add_argument('--continuous-paths', type=Path, help='Continuous-path analysis JSON')
     parser.add_argument('--continuous-path-test', type=int, choices=(1, 20), help='Draw 1 or 20 paths in Paint')
     parser.add_argument('--paint-plan-gap-test', action='store_true', help='Draw only two separated orange strokes to diagnose unwanted connector lines')
@@ -1254,7 +1301,9 @@ def main():
         speed = args.speed if args.speed is not None else 20
         if not isinstance(speed,(int,float)) or not math.isfinite(speed) or not 0 < speed <= 100:
             parser.error('Invalid drawing speed')
-        draw_full_dog_bucket(args.full_dog_bucket,float(speed))
+        if args.pixel_finish_limit < 1:
+            parser.error('--pixel-finish-limit must be positive')
+        draw_full_dog_bucket(args.full_dog_bucket,float(speed),args.pixel_perfect_finish,args.pixel_finish_limit)
         return
     if args.neighbor_regions_test is not None:
         if args.region_bucket_test or args.ear_contour_test or args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
