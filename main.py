@@ -1201,74 +1201,24 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     black_planned = 0
     black_strokes = 0
     ink_restored = 0
+    # Diagnostic-only run: do not touch Paint. Compare the original ink
+    # mask against the real canvas and report connected missing regions.
+    # This isolates whether late ink repair is visually useful at all.
     if ink_unresolved:
-        print(f'FINAL INK RESTORATION: {ink_unresolved} missing dark pixels; '
-              'draw only unresolved contour segments',flush=True)
-        engine.colors.select_rgb(outline_rgb)
-        previous_rgb = outline_rgb
-        engine.tools.select('pencil')
-        engine.stroke_size.select(1)
-        ink_contours,_ = cv2.findContours(
-            np.uint8(expected_dark)*255,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
-        # Contours can share boundary pixels. A pixel is scheduled at most
-        # once; after each contour we refresh the real Paint screenshot.
-        scheduled = set()
-        for contour in sorted(ink_contours,
-                              key=lambda c:cv2.arcLength(c,True),
-                              reverse=True):
-            check_cancel()
-            points = [tuple(map(int,p[0])) for p in contour]
-            if not points:
-                continue
-            # RETR_LIST contours may include both sides of a thin ink ring.
-            # Keep a cyclic contour only if its ends touch on the 8-grid.
-            cyclic = (len(points)>2 and
-                      max(abs(points[0][0]-points[-1][0]),
-                          abs(points[0][1]-points[-1][1])) <= 1)
-            missing = [(not actual_dark[y,x]) and (x,y) not in scheduled
-                       for x,y in points]
-            if not any(missing):
-                continue
-            if cyclic and all(missing):
-                segments = [points+[points[0]]]
-            else:
-                # Split at already-correct pixels. Rotate a closed contour
-                # to start after a correct point so wraparound fragments join.
-                if cyclic and not all(missing):
-                    cut = missing.index(False)
-                    points = points[cut+1:]+points[:cut+1]
-                    missing = missing[cut+1:]+missing[:cut+1]
-                segments = []
-                run = []
-                for point,needs_ink in zip(points,missing):
-                    if needs_ink:
-                        run.append(point)
-                    elif run:
-                        segments.append(run)
-                        run = []
-                if run:
-                    segments.append(run)
-            for segment in segments:
-                check_cancel()
-                # One dot or one contiguous missing arc, not the whole ring.
-                mapped = [(left+x,top+y) for x,y in segment]
-                engine.paint.validate_canvas_points(mapped)
-                if len(mapped)==1:
-                    engine.canvas.fill(*mapped[0])
-                else:
-                    engine.paint.stroke(mapped,duration=0.012)
-                scheduled.update(segment)
-                black_planned += 1
-                black_strokes += 1
-            # A real screenshot, not an assumed in-memory pixel change,
-            # determines whether overlapping contours still need work.
-            shot = pg.screenshot()
-            actual = np.asarray(shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
-            actual_dark = np.all(actual <= 40,axis=2)
-        ink_restored = ink_unresolved - int(np.count_nonzero(expected_dark & ~actual_dark))
-        print(f'FINAL INK VERIFY: restored={ink_restored}, '
-              f'remaining={ink_unresolved-ink_restored}; '
-              f'gestures={black_strokes}',flush=True)
+        missing_ink = np.uint8(expected_dark & ~actual_dark)
+        component_count,_,component_stats,_ = cv2.connectedComponentsWithStats(
+            missing_ink,connectivity=8)
+        component_sizes = sorted(
+            (int(component_stats[i,cv2.CC_STAT_AREA])
+             for i in range(1,component_count)),reverse=True)
+        print(f'FINAL INK DIAGNOSTIC ONLY: {ink_unresolved} missing dark pixels; '
+              f'{len(component_sizes)} components; '
+              f'largest={component_sizes[:10]}; '
+              'gestures=0; no Paint actions',flush=True)
+    else:
+        print('FINAL INK DIAGNOSTIC ONLY: no missing dark pixels; '
+              'gestures=0',flush=True)
+    # Leave actual/previous_rgb unchanged for the subsequent white layer.
     # Last nested layer: white glints inside black eyes. Keep them after
     # the dark ink pass; do not globally paint white before black.
     if white_after_ink:
