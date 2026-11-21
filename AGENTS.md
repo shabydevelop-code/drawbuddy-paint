@@ -4,15 +4,15 @@ These rules apply to every change in this repository. Read this file before modi
 
 ## Mission
 
-Draw a recognizable, complete, accurately colored dog in **Microsoft Paint by physically controlling the mouse and Paint tools**. The output is a human-like drawing process, not a bitmap transfer or a raster printer. Preserve the reference's outlines, shapes, colors, and small details. The final Paint canvas must have no unintended white gaps between adjacent colored or outlined cells.
+Draw a recognizable, complete, accurately colored source image in **Microsoft Paint by physically controlling the mouse and Paint tools**. The output is a human-like drawing process, not a bitmap transfer or a raster printer. Preserve the reference's outlines, shapes, colors, and small details. The final Paint canvas must have no unintended white gaps between adjacent colored or outlined cells.
 
 ## Approved black-base workflow
 
-The user explicitly approved **Black Base + Color Layers** on 2026-11-21. After tracing and closing the exterior silhouette, use Paint Bucket to fill the enclosed dog silhouette black before drawing internal colored boundaries. Draw each nonblack region's closed contour in its intended color over the black base, then fill its interior with Bucket and verify the actual Paint screenshot. Keep black outlines/details where the source requires them; paint nested white highlights after black eyes when required. The black foundation replaces the previous white-interior starting state; it does **not** authorize pixel printing, bitmap paste, broad Pencil coverage, or skipping verification. An unfilled dark seam is still a fidelity defect that must be measured.
+The user explicitly approved **Black Base + Color Layers** on 2026-11-21. After tracing and closing the exterior silhouette, use Paint Bucket to fill the enclosed subject silhouette black before drawing internal colored boundaries. Draw each nonblack region's closed contour in its intended color over the black base, then fill its interior with Bucket and verify the actual Paint screenshot. Keep black outlines/details where the source requires them; paint nested white highlights after black eyes when required. The black foundation replaces the previous white-interior starting state; it does **not** authorize pixel printing, bitmap paste, broad Pencil coverage, or skipping verification. An unfilled dark seam is still a fidelity defect that must be measured.
 
 ## Non-negotiable drawing workflow
 
-1. **Outer contours first.** Trace the dog's exterior silhouette with meaningful, continuous pencil/line paths: ears, head, body, legs, paws, and tail. Do not start with interior colors or scanline strokes.
+1. **Outer contours first.** Trace the subject's exterior silhouette with meaningful, continuous pencil/line paths. Do not start with interior colors or scanline strokes.
 2. **Inner contours second.** Draw the structural boundaries separating color regions and facial details. Ensure boundaries are closed where Paint Bucket requires closure.
 3. **Bucket fills third.** Use Paint's Bucket to fill bounded regions, choosing seeds inside the correct region. Respect nesting, holes, and the order of overlapping regions.
 4. **Local pixel repairs last.** Use Pencil only for thin areas, tiny features, and verified remaining gaps that cannot be safely filled by Bucket. Repairs must be local and proportionate, not a substitute for the drawing algorithm.
@@ -67,9 +67,9 @@ The user explicitly approved **Black Base + Color Layers** on 2026-11-21. After 
 
 ## Acceptance criteria
 
-1. A visible Paint drawing starts with continuous **outer dog contours**, then internal contours.
+1. A visible Paint drawing starts with continuous **outer subject contours**, then internal contours.
 2. Large bounded regions are colored with **Bucket**, not raster printing.
-3. No unintended white gaps, missing areas, or color spills in the completed dog.
+3. No unintended white gaps, missing areas, or color spills in the completed image.
 4. The mouse is responsible for all drawing operations; no image pasting.
 5. A screenshot or equivalent captured Paint result is checked against the reference.
 6. Any future change must preserve criteria 1–5 unless the user explicitly authorizes an exception.
