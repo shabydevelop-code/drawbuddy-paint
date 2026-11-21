@@ -544,26 +544,45 @@ def draw_neighbor_regions_test(plan_path, speed):
         mapped = [(left+x,top+y) for x,y in points]
         seed = (left+region['seed'][0],top+region['seed'][1])
         plans.append((region['rgb'],mapped,seed))
-    print(f'NEIGHBOR REGION TEST: {len(plans)} nearby color regions; outline + bucket each')
+    print(f'NEIGHBOR REGION TEST: {len(plans)} nearby color regions; '
+          'ALL outlines first, THEN bucket fills')
     print('Open a NEW blank white maximized Paint canvas. F8 cancels.')
     engine = DrawingEngine(speed=speed)
     for _, points, seed in plans:
         engine.paint.validate_canvas_points(points+[seed])
     start = time.perf_counter()
     engine.stroke_size.select(1)
+    engine.tools.select('pencil')
+    # Draw each closed boundary once. Keep closures intact: removing shared
+    # boundary segments would open regions and make bucket fills leak.
+    seen_closed_boundaries = set()
+    for i,(rgb,points,seed) in enumerate(plans,1):
+        check_cancel()
+        unique = frozenset(points[:-1])
+        if unique in seen_closed_boundaries:
+            print(f'  Outline {i}/{len(plans)} already drawn; skipped')
+            continue
+        seen_closed_boundaries.add(unique)
+        engine.colors.select_rgb(rgb)
+        engine.paint.stroke(points, duration=0.012)
+        print(f'  Outline {i}/{len(plans)} closed; color={rgb}')
+    engine.paint.refresh_display()
+    # Keep the two phases separately inspectable.
+    import pyautogui as pg
+    pg.screenshot().save(str(output/'outlines-screen.png'))
+    engine.tools.select('bucket')
     for i,(rgb,points,seed) in enumerate(plans,1):
         check_cancel()
         engine.colors.select_rgb(rgb)
-        engine.tools.select('pencil')
-        engine.paint.stroke(points, duration=0.012)
-        engine.tools.select('bucket')
         engine.canvas.fill(*seed)
-        print(f'  Region {i}/{len(plans)} filled; color={rgb}')
+        print(f'  Fill {i}/{len(plans)} completed; color={rgb}')
     engine.paint.refresh_display()
     report = compare_paint_canvas(engine.paint,output/'expected.png',
                                   w,h,left,top,output=output,tolerance=0)
-    report['test'] = 'multiple color-region contours and bucket fills'
+    report['test'] = 'all closed contours first, then bucket fills'
     report['region_count'] = len(plans)
+    report['duplicate_closed_contours_skipped'] = len(plans)-len(seen_closed_boundaries)
+    report['shared_partial_boundaries_deduplicated'] = False
     report['elapsed_seconds'] = round(time.perf_counter()-start,3)
     (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(f'NEIGHBOR REGION TEST: exact match={report["exact_pixel_match_percent"]}%, '
