@@ -1651,7 +1651,7 @@ def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None, color
 
 
 
-def draw_house(speed):
+def draw_house(speed, outlines_only=False):
     """Draw a geometric house with real Paint Pencil contours and Bucket fills."""
     from drawbuddy.controller import check_cancel
     import pyautogui as pg
@@ -1685,6 +1685,17 @@ def draw_house(speed):
         path = [(left+x,top+y) for x,y in vertices+[vertices[0]]]
         engine.paint.stroke(path,duration=0.012)
         print(f'HOUSE OUTLINE: {name}',flush=True)
+    if outlines_only:
+        from pathlib import Path
+        image_path = Path('output/comparison/house/outlines.png')
+        image_path.parent.mkdir(parents=True,exist_ok=True)
+        sx,sy = engine.paint.point(left,top)
+        shot = pg.screenshot()
+        if sx < 0 or sy < 0 or sx+430 > shot.width or sy+330 > shot.height:
+            raise RuntimeError('House outline screenshot outside display')
+        shot.crop((sx,sy,sx+430,sy+330)).save(image_path)
+        print(f'HOUSE OUTLINES ONLY: no Bucket, no doorknob; screenshot={image_path}',flush=True)
+        return
     print('HOUSE STAGE 2/2: Bucket fills',flush=True)
     engine.tools.select('bucket')
     for name, rgb, vertices, seed in regions:
@@ -1710,6 +1721,7 @@ def main():
     parser.add_argument('--region-bucket-test', type=Path, help='Outline one real closed color region and fill it with Paint bucket')
     parser.add_argument('--neighbor-regions-test', type=Path, help='Draw and bucket-fill nearby distinct color regions')
     parser.add_argument('--house', action='store_true', help='Draw a geometric house with Pencil contours and Bucket fills')
+    parser.add_argument('--house-outlines-only', action='store_true', help='Diagnose house contours without Bucket fills')
     parser.add_argument('--full-dog-bucket', type=Path, help='Draw entire color pixel map with closed contours and bucket fills')
     parser.add_argument('--pixel-perfect-finish', action='store_true', help='Experimental pixel print correction after drawing')
     parser.add_argument('--pixel-finish-limit', type=int, default=1500, help='Maximum finishing strokes')
@@ -1744,13 +1756,13 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
-    if args.house:
+    if args.house or args.house_outlines_only:
         if args.full_dog_bucket is not None:
             parser.error('--house cannot be combined with --full-dog-bucket')
         speed = args.speed if args.speed is not None else 20
         if not math.isfinite(speed) or not 0 < speed <= 100:
             parser.error('Invalid drawing speed')
-        draw_house(float(speed))
+        draw_house(float(speed),outlines_only=args.house_outlines_only)
         return
     if args.full_dog_bucket is not None:
         if args.neighbor_regions_test or args.region_bucket_test or args.ear_contour_test or args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
