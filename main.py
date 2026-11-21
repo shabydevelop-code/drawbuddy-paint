@@ -1356,23 +1356,54 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
         # continuous paths for the Paint Pencil tool.
         missing_u8 = np.uint8(missing_ink)*255
         count,labels,stats,_ = cv2.connectedComponentsWithStats(missing_u8,8)
-        for component_id in sorted(range(1,count),
-                                   key=lambda i:-int(stats[i,cv2.CC_STAT_AREA])):
-            check_cancel()
+        # Collect paths first, then choose the nearest next start point.
+        # Reversing an open path is safe; closed paths may be rotated to
+        # begin near the current cursor without changing their geometry.
+        pending_paths = []
+        for component_id in range(1,count):
             component = np.uint8(labels == component_id)*255
             contours,_ = cv2.findContours(component,cv2.RETR_LIST,
                                           cv2.CHAIN_APPROX_NONE)
             for contour in contours:
                 points = [tuple(map(int,p[0])) for p in contour]
-                if not points:
-                    continue
-                if len(points)>2:
-                    points.append(points[0])
-                mapped = [(left+x,top+y) for x,y in points]
-                engine.paint.validate_canvas_points(mapped)
-                engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
-                                    duration=0.012)
-                black_strokes += 1
+                if points:
+                    pending_paths.append(points)
+        cursor = None
+        while pending_paths:
+            check_cancel()
+            best = None
+            for index,points in enumerate(pending_paths):
+                if cursor is None:
+                    # Begin with the largest continuous contour.
+                    candidate = (-len(points),index,0,False)
+                elif len(points)>2:
+                    nearest = min(range(len(points)),
+                                  key=lambda k:(points[k][0]-cursor[0])**2+
+                                               (points[k][1]-cursor[1])**2)
+                    distance = ((points[nearest][0]-cursor[0])**2+
+                                (points[nearest][1]-cursor[1])**2)
+                    candidate = (distance,index,nearest,False)
+                else:
+                    forward = ((points[0][0]-cursor[0])**2+
+                               (points[0][1]-cursor[1])**2)
+                    reverse = ((points[-1][0]-cursor[0])**2+
+                               (points[-1][1]-cursor[1])**2)
+                    candidate = (min(forward,reverse),index,0,reverse<forward)
+                if best is None or candidate[0]<best[0]:
+                    best = candidate
+            _,index,offset,reverse = best
+            points = pending_paths.pop(index)
+            if len(points)>2:
+                points = points[offset:]+points[:offset]
+                points.append(points[0])
+            elif reverse:
+                points.reverse()
+            mapped = [(left+x,top+y) for x,y in points]
+            engine.paint.validate_canvas_points(mapped)
+            engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
+                                duration=0.012)
+            cursor = points[-1]
+            black_strokes += 1
         print(f'INK RESTORATION: {black_strokes} connected contour Pencil strokes',flush=True)
     # Leave actual/previous_rgb unchanged for the subsequent white layer.
     # Last nested layer: white glints inside black eyes. Keep them after
