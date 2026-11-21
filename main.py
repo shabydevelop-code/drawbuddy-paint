@@ -550,9 +550,18 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                 else:
                     omitted_pixels += area
                 continue
-            pts = [tuple(map(int,p[0])) for p in contour]
-            pts.append(pts[0])
-            regions.append({'area':area,'rgb':rgb,'paths':[pts],'seed':seed,'mask':component})
+            # Preserve inner holes as explicit closed boundaries. The old
+            # RETR_EXTERNAL-only planner left these openings unprotected:
+            # Paint Bucket could flood the islands inside an outer contour.
+            all_contours,hierarchy = cv2.findContours(
+                component,cv2.RETR_CCOMP,cv2.CHAIN_APPROX_NONE)
+            paths = []
+            for boundary in all_contours:
+                boundary_pts = [tuple(map(int,p[0])) for p in boundary]
+                if len(boundary_pts) > 1:
+                    paths.append(boundary_pts+[boundary_pts[0]])
+            regions.append({'area':area,'rgb':rgb,'paths':paths,
+                            'seed':seed,'mask':component})
     # Pixel-level plan verification: a closed contour alone is not proof
     # that Paint bucket will cover the component. Simulate each region mask
     # and reject unsafe bucket plans before any UI operation.
@@ -707,6 +716,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             check_cancel()
             engine.tools.select('pencil')
             engine.stroke_size.select(1)
+            # All enclosing and hole boundaries must exist before Bucket.
             for path in region['paths']:
                 mapped = [(left+x,top+y) for x,y in path]
                 engine.paint.validate_canvas_points(mapped)
