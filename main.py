@@ -610,6 +610,72 @@ def draw_full_dog_bucket(plan_path, speed):
             engine.paint.stroke(mapped,duration=0.012)
         if i % 50 == 0:
             print(f'  Details: {i}/{len(details)}')
+    # Repair narrow WHITE gaps based on the actual Paint screenshot.
+    # Never repaint dark outlines or broad regions with uncertain boundaries.
+    import pyautogui as pg
+    engine.paint.refresh_display()
+    sx,sy = engine.paint.point(left,top)
+    shot = pg.screenshot()
+    if sx < 0 or sy < 0 or sx+w > shot.width or sy+h > shot.height:
+        raise RuntimeError('Repair screenshot crop outside screen')
+    actual = np.asarray(shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+    target = cv2.cvtColor(source,cv2.COLOR_BGR2RGB)
+    missing = np.uint8(np.all(actual >= 245,axis=2) &
+                       np.any(target < 235,axis=2) &
+                       (np.max(target,axis=2) >= 70))
+    n,labels,stats,_ = cv2.connectedComponentsWithStats(missing,8)
+    repairs = []
+    skipped = 0
+    for idx in range(1,n):
+        area = int(stats[idx,cv2.CC_STAT_AREA])
+        component = np.uint8(labels == idx)
+        if area > 350 or cv2.distanceTransform(component,cv2.DIST_L2,3).max() > 3.5:
+            skipped += area
+            continue
+        yy,xx = np.where(component)
+        remaining = set(zip(xx.tolist(),yy.tolist()))
+        while remaining:
+            start = min(remaining,key=lambda p:(p[1],p[0]))
+            remaining.remove(start)
+            path = [start]
+            while True:
+                x,y = path[-1]
+                next_points = [(x+dx,y+dy) for dx,dy in
+                               ((1,0),(0,1),(-1,0),(0,-1),(1,1),(-1,1),(1,-1),(-1,-1))
+                               if (x+dx,y+dy) in remaining]
+                if not next_points:
+                    break
+                nxt = next_points[0]
+                remaining.remove(nxt)
+                path.append(nxt)
+            color = None
+            run = []
+            for x,y in path:
+                rgb = tuple(int(v) for v in target[y,x])
+                if run and rgb != color:
+                    repairs.append((color,run))
+                    run = []
+                color = rgb
+                run.append((x,y))
+            if run:
+                repairs.append((color,run))
+    repairs.sort(key=lambda p:p[0])
+    repaired = 0
+    for rgb,path in repairs:
+        check_cancel()
+        if rgb != previous_rgb:
+            engine.colors.select_rgb(rgb)
+            previous_rgb = rgb
+            color_switches += 1
+        engine.tools.select('pencil')
+        mapped = [(left+x,top+y) for x,y in path]
+        engine.paint.validate_canvas_points(mapped)
+        if len(mapped) == 1:
+            engine.canvas.fill(*mapped[0])
+        else:
+            engine.paint.stroke(mapped,duration=0.008)
+        repaired += len(path)
+    print(f'WHITE GAP REPAIR: attempted {repaired} pixels in {len(repairs)} strokes; skipped {skipped} unsafe pixels')
     engine.paint.refresh_display()
     report = compare_paint_canvas(engine.paint,output/'expected.png',
                                   w,h,left,top,output=output,tolerance=0)
@@ -619,6 +685,9 @@ def draw_full_dog_bucket(plan_path, speed):
     report['thin_regions'] = len(details)
     report['omitted_tiny_pixels'] = omitted_pixels
     report['color_switches'] = color_switches
+    report['white_gap_repair_attempted_pixels'] = repaired
+    report['white_gap_repair_strokes'] = len(repairs)
+    report['white_gap_skipped_pixels'] = skipped
     report['elapsed_seconds'] = round(time.perf_counter()-started,3)
     (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(f'FULL DOG DONE: exact match={report["exact_pixel_match_percent"]}%, '
