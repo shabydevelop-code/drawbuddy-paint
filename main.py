@@ -7,7 +7,7 @@ from drawbuddy.drawing_engine import DrawingEngine
 from compare_images import compare_paint_canvas
 
 
-def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120):
+def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120):
     """Full image: all color components, closed contours, Paint bucket, no raster strokes."""
     import time
     startup_clock = time.perf_counter()
@@ -179,7 +179,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     output = Path('output/comparison/full-dog-bucket')
     output.mkdir(parents=True,exist_ok=True)
     cv2.imwrite(str(output/'expected.png'),source)
-    print(f'FULL DOG: {len(regions)} fill regions, {len(details)} thin details, '
+    print(f'IMAGE DRAW: {len(regions)} fill regions, {len(details)} thin details, '
           f'{omitted_pixels} noise pixels omitted; black details last')
     print(f'BUCKET WIDTH CHECK: {len(narrow_regions)} components have no '
           '3x3 free interior after boundaries; all other enclosed '
@@ -732,7 +732,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                                   w,h,left,top,output=output,tolerance=0)
     # A completed drawing is not a passed 1:1 test unless every pixel agrees.
     # Persist the comparison report before rejecting the drawing.
-    report['test'] = 'full dog: color boundaries separate from black source-pixel ink'
+    report['test'] = 'generic image: color boundaries separate from black source-pixel ink'
     report['region_count'] = len(regions)
     report['unsafe_bucket_regions'] = len(unsafe_regions)
     report['unsafe_bucket_fallback_strokes'] = fallback_completed
@@ -767,7 +767,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             f'PAINT 1:1 FAILED: {report["error_pixels"]} mismatching pixels; '
             f'exact match={report["exact_pixel_match_percent"]}%. '
             f'Inspect {output / "error-overlay.png"} and {output / "report.json"}.')
-    print(f'FULL DOG DONE: exact match={report["exact_pixel_match_percent"]}%, '
+    print(f'IMAGE DRAW DONE: exact match={report["exact_pixel_match_percent"]}%, '
           f'errors={report["error_pixels"]}; output={output}')
 
 
@@ -812,7 +812,7 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
     },separators=(',',':')),encoding='utf-8')
     print(f'SOURCE IMAGE: {source_path}, {w}x{h}, {len(colors)} exact colors; '
           'using existing full contour/Bucket engine',flush=True)
-    draw_full_dog_bucket(plan_path,speed,pixel_finish,finish_limit,
+    draw_image_bucket(plan_path,speed,pixel_finish,finish_limit,
                          black_gap_finish,black_gap_limit)
 
 
@@ -835,7 +835,7 @@ def main():
     if args.pixel_perfect_finish and args.black_gap_finish:
         parser.error('Choose only one finishing mode')
     if args.full_dog_bucket is not None:
-        draw_full_dog_bucket(args.full_dog_bucket, args.speed,
+        draw_image_bucket(args.full_dog_bucket, args.speed,
                              args.pixel_perfect_finish, args.pixel_finish_limit,
                              args.black_gap_finish, args.black_gap_limit)
     else:
