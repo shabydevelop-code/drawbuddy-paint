@@ -539,17 +539,26 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                 # surround large holes; RETR_EXTERNAL would flood them.
                 # The dedicated final ink stage draws these details.
                 continue
-            if area < 8:
-                omitted_pixels += area
-                continue
-            if radius < 2.0 or cv2.contourArea(contour) < 3:
-                # No bucket on thin regions. Trace their real component
-                # perimeter once; avoid morphology-generated scribble loops.
+            # The relevant width is the free interior AFTER a 1-pixel
+            # boundary is drawn, not the overall width of the source region.
+            # Do not discard a long, narrow enclosed color corridor merely
+            # because its distance-transform maximum is below two pixels.
+            free_interior = cv2.erode(
+                component,np.ones((3,3),np.uint8),
+                borderType=cv2.BORDER_CONSTANT,borderValue=0)
+            free_count = int(np.count_nonzero(free_interior))
+            if area < 4 or free_count == 0:
+                # No safe Bucket seed remains after the contour. These
+                # are genuine line-only details or local repair candidates.
                 if area >= 2:
-                    narrow_regions.append({'rgb':rgb,'area':area,'mask':component})
+                    narrow_regions.append({'rgb':rgb,'area':area,'mask':component,
+                                           'free_pixels':free_count})
                 else:
                     omitted_pixels += area
                 continue
+            # Seed on the actual unpainted interior, not a boundary pixel.
+            _,_,_,seed = cv2.minMaxLoc(
+                cv2.distanceTransform(free_interior,cv2.DIST_L2,3))
             # Preserve inner holes as explicit closed boundaries. The old
             # RETR_EXTERNAL-only planner left these openings unprotected:
             # Paint Bucket could flood the islands inside an outer contour.
@@ -627,6 +636,9 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     cv2.imwrite(str(output/'expected.png'),source)
     print(f'FULL DOG: {len(regions)} fill regions, {len(details)} thin details, '
           f'{omitted_pixels} noise pixels omitted; black details last')
+    print(f'BUCKET WIDTH CHECK: {len(narrow_regions)} components have no '
+          '3x3 free interior after boundaries; all other enclosed '
+          'components retain Bucket candidates',flush=True)
     print('Open a NEW blank white maximized Paint canvas. F8 cancels.',flush=True)
     planning_seconds = time.perf_counter() - stage_clock
     stage_clock = time.perf_counter()
