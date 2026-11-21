@@ -528,34 +528,49 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         stages.append((1,rgb,cv2.bitwise_and(mask,cv2.bitwise_not(outer_ink))))
     for rgb,mask in color_groups:
         stages.append((2,rgb,mask))
+    # One continuous pencil traversal per four-connected color component.
+    # A DFS spanning-tree walk may retrace a colored pixel, but never crosses
+    # a white cell or a different color. Split long walks into bounded strokes.
     jobs = []
+    max_points_per_stroke = 300
     for stage,rgb,mask in stages:
-        active = {}
-        for y in range(h):
-            xs = np.flatnonzero(mask[y])
-            runs = []
-            if len(xs):
-                runs = [(int(run[0]),int(run[-1]))
-                        for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1)]
-            current = set(runs)
-            for key in list(active):
-                if key not in current:
-                    jobs.append((stage,rgb,active.pop(key)))
-            for x0,x1 in runs:
-                key = (x0,x1)
-                if key not in active:
-                    active[key] = [(x0,y),(x1,y)]
-                else:
-                    path = active[key]
-                    if len(path) >= 300:
-                        jobs.append((stage,rgb,path))
-                        active[key] = [(x0,y),(x1,y)]
-                    elif path[-1][0] == x1:
-                        path.extend([(x1,y),(x0,y)])
-                    else:
-                        path.extend([(x0,y),(x1,y)])
-        for path in active.values():
-            jobs.append((stage,rgb,path))
+        count,labels,stats,_ = cv2.connectedComponentsWithStats(mask,4)
+        for component_id in range(1,count):
+            x0 = int(stats[component_id,cv2.CC_STAT_LEFT])
+            y0 = int(stats[component_id,cv2.CC_STAT_TOP])
+            cw = int(stats[component_id,cv2.CC_STAT_WIDTH])
+            ch = int(stats[component_id,cv2.CC_STAT_HEIGHT])
+            local = labels[y0:y0+ch,x0:x0+cw] == component_id
+            ys,xs = np.where(local)
+            if not len(xs):
+                continue
+            pixels = {(int(x+x0),int(y+y0)) for y,x in zip(ys,xs)}
+            root = min(pixels,key=lambda p:(p[1],p[0]))
+            visited = {root}
+            path = [root]
+            # Stack entries: point and iterator of its 4-neighbors.
+            def adjacent(p):
+                x,y = p
+                return ((x+1,y),(x,y+1),(x-1,y),(x,y-1))
+            stack = [(root,iter(adjacent(root)))]
+            while stack:
+                point,neighbors = stack[-1]
+                nxt = next(neighbors,None)
+                if nxt is None:
+                    stack.pop()
+                    if stack:
+                        path.append(stack[-1][0])
+                elif nxt in pixels and nxt not in visited:
+                    visited.add(nxt)
+                    path.append(nxt)
+                    stack.append((nxt,iter(adjacent(nxt))))
+                if len(path) >= max_points_per_stroke:
+                    jobs.append((stage,rgb,path))
+                    path = [path[-1]]
+            if path:
+                jobs.append((stage,rgb,path))
+            if len(visited) != len(pixels):
+                raise RuntimeError('Incomplete component traversal in pixel planner')
     jobs.sort(key=lambda job:(job[0],job[1]))
     print('DRAW ORDER: outer ink -> inner ink -> color pixels',flush=True)
     # Simulate all pencil segments at source resolution before Paint opens.
