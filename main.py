@@ -458,6 +458,65 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
 
 
 
+
+def draw_ear_contour_test(plan_path, speed):
+    """One actual shape-following Paint gesture, extracted from upper dog silhouette."""
+    import cv2
+    import numpy as np
+    import time
+    data = json.loads(Path(plan_path).read_text(encoding='utf-8'))
+    w, h = data.get('width'), data.get('height')
+    if data.get('format') != 'drawbuddy-paint-stroke-plan-v1' or not isinstance(w, int) or not isinstance(h, int) or not 1 <= w <= 500 or not 1 <= h <= 547:
+        raise ValueError('Expected 500x547 pixel paint plan')
+    # Build an exact foreground mask directly from the established pixel plan.
+    mask = np.zeros((h, w), dtype=np.uint8)
+    for group in data['groups']:
+        if group['background']:
+            continue
+        for x0, y0, x1, y1 in group['strokes']:
+            if not 0 <= x0 <= x1 < w or not 0 <= y0 == y1 < h:
+                raise ValueError('Invalid source run')
+            mask[y0, x0:x1+1] = 255
+    # Upper-left head region: choose a substantial outer silhouette, never a row scan.
+    upper = mask[:max(2, h//2), :max(2, w//2)].copy()
+    contours, _ = cv2.findContours(upper, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    candidates = [c for c in contours if cv2.contourArea(c) >= 100 and
+                  cv2.boundingRect(c)[2] >= 15 and cv2.boundingRect(c)[3] >= 15]
+    if not candidates:
+        raise ValueError('No substantial upper-left contour in the pixel map')
+    contour = max(candidates, key=cv2.contourArea)
+    # Keep a short portion of the outer boundary to isolate the first natural gesture.
+    epsilon = 1.2
+    simplified = cv2.approxPolyDP(contour, epsilon, True).reshape(-1, 2)
+    if len(simplified) < 5:
+        simplified = cv2.approxPolyDP(contour, 0.5, True).reshape(-1, 2)
+    points = [tuple(map(int, p)) for p in simplified]
+    # Follow the outer boundary once; no horizontal filling and no internal raster passes.
+    points.append(points[0])
+    left, top = 250+(500-w)//2, 155+(547-h)//2
+    mapped = [(left+x, top+y) for x,y in points]
+    output = Path('output/comparison/ear-contour-test')
+    output.mkdir(parents=True, exist_ok=True)
+    preview = np.full((h,w,3), 255, dtype=np.uint8)
+    cv2.polylines(preview, [np.asarray(points, np.int32)], False, (0, 0, 0), 1, cv2.LINE_8)
+    cv2.imwrite(str(output/'expected.png'), preview)
+    print(f'EAR CONTOUR TEST: {len(points)} points; one closed, shape-following gesture')
+    print('Open a NEW blank white maximized Paint canvas. F8 cancels.')
+    engine = DrawingEngine(speed=speed)
+    engine.paint.validate_canvas_points(mapped)
+    engine.tools.select('pencil')
+    engine.stroke_size.select(1)
+    engine.colors.select_primary('black')
+    start = time.perf_counter()
+    engine.paint.stroke(mapped, duration=0.012)
+    elapsed = time.perf_counter()-start
+    engine.paint.refresh_display()
+    report = compare_paint_canvas(engine.paint, output/'expected.png', w, h, left, top,
+                                  output=output, tolerance=0)
+    print(f'EAR CONTOUR DRAWN: {elapsed:.1f}s, exact RGB match '
+          f'{report["exact_pixel_match_percent"]}%; output={output}')
+
+
 def execute_continuous_path_test(path, speed, limit):
     """Draw actual connected color paths in Paint, without raster runs."""
     import time
@@ -665,6 +724,7 @@ def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None, color
 def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
     parser.add_argument('--paint-plan', type=Path, help='Validate or draw a 16-color pixel stroke plan')
+    parser.add_argument('--ear-contour-test', type=Path, help='Draw one real upper-head outline gesture from the pixel plan')
     parser.add_argument('--continuous-paths', type=Path, help='Continuous-path analysis JSON')
     parser.add_argument('--continuous-path-test', type=int, choices=(1, 20), help='Draw 1 or 20 paths in Paint')
     parser.add_argument('--paint-plan-gap-test', action='store_true', help='Draw only two separated orange strokes to diagnose unwanted connector lines')
@@ -694,6 +754,14 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
+    if args.ear_contour_test is not None:
+        if args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
+            parser.error('--ear-contour-test must be used alone')
+        speed = args.speed if args.speed is not None else 20
+        if not isinstance(speed, (int, float)) or not math.isfinite(speed) or not 0 < speed <= 100:
+            parser.error('Invalid drawing speed')
+        draw_ear_contour_test(args.ear_contour_test, float(speed))
+        return
     if args.continuous_paths is not None or args.continuous_path_test is not None:
         if args.continuous_paths is None or args.continuous_path_test is None:
             parser.error('--continuous-paths and --continuous-path-test are both required')
