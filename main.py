@@ -506,123 +506,6 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         occupied[mask != 0] = 1
         source[mask != 0] = rgb[::-1]
         groups.append((rgb,mask))
-    # Exact shared-cell coverage: every nonwhite source pixel is owned by
-    # exactly one pencil path. No double contours, no bucket, no clipboard.
-    # Merge identical horizontal runs on consecutive rows into a single
-    # serpentine mouse stroke, keeping every segment within source color.
-    # Three explicit stages: silhouette ink, internal ink, then color.
-    # Every pixel belongs to exactly one stage, preventing duplicate edges.
-    ink_groups = [(rgb,mask) for rgb,mask in groups
-                  if max(rgb) <= 24]
-    color_groups = [(rgb,mask) for rgb,mask in groups
-                    if max(rgb) > 24]
-    ink_mask = np.zeros((h,w),np.uint8)
-    for _,mask in ink_groups:
-        ink_mask = cv2.bitwise_or(ink_mask,mask)
-    white = np.uint8(np.all(source == 255,axis=2))*255
-    adjacent_white = cv2.dilate(white,np.ones((3,3),np.uint8))
-    outer_ink = cv2.bitwise_and(ink_mask,adjacent_white)
-    stages = []
-    for rgb,mask in ink_groups:
-        stages.append((0,rgb,cv2.bitwise_and(mask,outer_ink)))
-        stages.append((1,rgb,cv2.bitwise_and(mask,cv2.bitwise_not(outer_ink))))
-    for rgb,mask in color_groups:
-        stages.append((2,rgb,mask))
-    # One continuous pencil traversal per eight-connected color component.
-    # A DFS spanning-tree walk may retrace a colored pixel, but never crosses
-    # a white cell or a different color. Split long walks into bounded strokes.
-    jobs = []
-    max_points_per_stroke = 1200
-    for stage,rgb,mask in stages:
-        count,labels,stats,_ = cv2.connectedComponentsWithStats(mask,connectivity=8)
-        for component_id in range(1,count):
-            x0 = int(stats[component_id,cv2.CC_STAT_LEFT])
-            y0 = int(stats[component_id,cv2.CC_STAT_TOP])
-            cw = int(stats[component_id,cv2.CC_STAT_WIDTH])
-            ch = int(stats[component_id,cv2.CC_STAT_HEIGHT])
-            local = labels[y0:y0+ch,x0:x0+cw] == component_id
-            ys,xs = np.where(local)
-            if not len(xs):
-                continue
-            pixels = {(int(x+x0),int(y+y0)) for y,x in zip(ys,xs)}
-            root = min(pixels,key=lambda p:(p[1],p[0]))
-            visited = {root}
-            path = [root]
-            # Stack entries: point and iterator of its 4-neighbors.
-            def adjacent(p):
-                x,y = p
-                return ((x+1,y),(x,y+1),(x-1,y),(x,y-1),
-                        (x+1,y+1),(x-1,y+1),(x+1,y-1),(x-1,y-1))
-            stack = [(root,iter(adjacent(root)))]
-            while stack:
-                point,neighbors = stack[-1]
-                nxt = next(neighbors,None)
-                if nxt is None:
-                    stack.pop()
-                    if stack:
-                        path.append(stack[-1][0])
-                elif nxt in pixels and nxt not in visited:
-                    visited.add(nxt)
-                    path.append(nxt)
-                    stack.append((nxt,iter(adjacent(nxt))))
-                if len(path) >= max_points_per_stroke:
-                    jobs.append((stage,rgb,path))
-                    path = [path[-1]]
-            if path:
-                jobs.append((stage,rgb,path))
-            if len(visited) != len(pixels):
-                raise RuntimeError('Incomplete component traversal in pixel planner')
-    jobs.sort(key=lambda job:(job[0],job[1]))
-    print('DRAW ORDER: outer ink -> inner ink -> color pixels',flush=True)
-    # Simulate all pencil segments at source resolution before Paint opens.
-    planned = np.full((h,w,3),255,np.uint8)
-    for stage,rgb,path in jobs:
-        color = rgb[::-1]
-        for p0,p1 in zip(path,path[1:]):
-            cv2.line(planned,p0,p1,color,1,cv2.LINE_8)
-        if len(path) == 1:
-            x,y = path[0]
-            planned[y,x] = color
-    mismatched = int(np.count_nonzero(np.any(planned != source,axis=2)))
-    output = Path('output/comparison/full-dog-bucket')
-    output.mkdir(parents=True,exist_ok=True)
-    cv2.imwrite(str(output/'expected.png'),source)
-    cv2.imwrite(str(output/'planned.png'),planned)
-    print(f'SHARED-CELL PREFLIGHT: {len(jobs)} pencil strokes, '
-          f'{mismatched} incorrect planned pixels, no stroke-count limit',flush=True)
-    if mismatched:
-        raise RuntimeError(
-            f'Unsafe drawing plan: {mismatched} mismatched pixels. Paint not opened.')
-    from drawbuddy.controller import check_cancel
-    engine = DrawingEngine(speed=speed)
-    engine.tools.select('pencil')
-    engine.stroke_size.select(1)
-    left,top = 250+(500-w)//2,155+(547-h)//2
-    last_rgb = None
-    for index,(stage,rgb,path) in enumerate(jobs,1):
-        check_cancel()
-        if rgb != last_rgb:
-            engine.colors.select_rgb(rgb)
-            last_rgb = rgb
-        mapped = [(left+x,top+y) for x,y in path]
-        engine.paint.validate_canvas_points(mapped)
-        # A singleton is a pencil dot, never a bucket flood fill.
-        engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,duration=0.008)
-        if index % 200 == 0:
-            print(f'SHARED-CELL DRAW: {index}/{len(jobs)}',flush=True)
-    report = compare_paint_canvas(engine.paint,output/'expected.png',
-                                  w,h,left,top,output=output,tolerance=0)
-    report['test'] = 'exact shared-cell pencil coverage without contours or bucket'
-    report['planned_strokes'] = len(jobs)
-    report['drawing_order'] = 'outer ink, inner ink, color'
-    report['planned_wrong_pixels'] = mismatched
-    (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
-    print(f'SHARED-CELL RESULT: {report["error_pixels"]} pixel errors',flush=True)
-    if report['error_pixels']:
-        raise RuntimeError(
-            f'Drawing verification failed: {report["error_pixels"]} pixels '
-            'differ from source. See output/comparison/full-dog-bucket.')
-    return
     # Include the implicit white pixels so enclosed white regions can be
     # recovered by the contour/bucket planner when necessary.
     white_mask = np.uint8(occupied == 0)*255
@@ -922,6 +805,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         black_gap_stats['disabled_reason'] = 'Unsafe contour-following repair disabled'
     # Mandatory one-pixel seam repair: a white pixel between painted
     # neighbors is never delegated to Paint's bucket tool.
+    # This is a small finishing pass, never the primary drawing method.
     import pyautogui as pg
     sx,sy = engine.paint.point(left,top)
     shot = pg.screenshot()
