@@ -186,6 +186,9 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     print(f'BUCKET WIDTH CHECK: {len(narrow_regions)} components have no '
           '3x3 free interior after boundaries; all other enclosed '
           'components retain Bucket candidates',flush=True)
+    if diagnostic_only:
+        print(f'DIAGNOSTIC ONLY COMPLETE: no Paint launched; files={output}',flush=True)
+        return
     print('Open a NEW blank white maximized Paint canvas. F8 cancels.',flush=True)
     planning_seconds = time.perf_counter() - stage_clock
     stage_clock = time.perf_counter()
@@ -759,7 +762,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
           f'errors={report["error_pixels"]}; output={output}')
 
 
-def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None):
+def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None, diagnostic_only=False):
     """Full image: all color components, closed contours, Paint bucket, no raster strokes."""
     import time
     startup_clock = time.perf_counter()
@@ -1603,7 +1606,8 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
 
 def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, finish_limit=1500,
                       black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None,
-                      preview_only=False, legacy_source=False, historical_palette=True):
+                      preview_only=False, legacy_source=False, historical_palette=True,
+                       diagnostic_only=False):
     """Convert an exact-RGB image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
@@ -1743,7 +1747,8 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
     print(f'SOURCE IMAGE: {source_path}, {w}x{h}, {len(colors)} quantized colors; '
           'using existing full contour/Bucket engine',flush=True)
     draw_image_bucket(plan_path if logs else plan,speed,pixel_finish,finish_limit,
-                         black_gap_finish,black_gap_limit,logs=logs,output_dir=output_dir)
+                         black_gap_finish,black_gap_limit,logs=logs,output_dir=output_dir,
+                      diagnostic_only=diagnostic_only)
 
 
 
@@ -1820,6 +1825,8 @@ def main():
                         help='Compare resized versus quantized contours without Paint')
     parser.add_argument('--preview-only', action='store_true',
                         help='Save resized and quantized preview to output/preview.png; do not launch Paint')
+    parser.add_argument('--diagnostic-only', action='store_true',
+                        help='Analyze source masks and Bucket plan; save diagnostics without launching Paint')
     parser.add_argument('--logs', action='store_true',
                         help='Save diagnostics in a unique output directory (off by default)')
     args = parser.parse_args()
@@ -1842,13 +1849,14 @@ def main():
         compare_preprocessing(args.source_image, args.colors)
         return
     output_dir = None
-    if args.logs and not args.preview_only:
+    if (args.logs or args.diagnostic_only) and not args.preview_only:
         output_dir = Path('output') / datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
         output_dir.mkdir(parents=True, exist_ok=False)
         print(f'LOG DIRECTORY: {output_dir}', flush=True)
-    draw_source_image(args.source_image, args.speed, colors_limit=args.colors, logs=args.logs,
+    draw_source_image(args.source_image, args.speed, colors_limit=args.colors, logs=(args.logs or args.diagnostic_only),
                       output_dir=output_dir, preview_only=args.preview_only,
-                      historical_palette=(not args.median_cut and not args.legacy_source))
+                      historical_palette=(not args.median_cut and not args.legacy_source),
+                      diagnostic_only=args.diagnostic_only)
 
 
 if __name__ == '__main__':
