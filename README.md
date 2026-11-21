@@ -48,7 +48,7 @@ The plan uses image-derived colors and therefore approximates a reference with m
 - `diagnostics/latest/`: Git-tracked diagnostic snapshots, retained for remote review.
 - `AGENTS.md`: mandatory drawing and fidelity rules.
 
-Older drawing modes still exist in `main.py` for compatibility; they are experimental and are not the current house/dog workflow. Do not treat offline expected images as proof of Paint execution.
+The entry point now exposes only `--house`, `--source-image`, and `--full-dog-bucket`. Legacy experimental modules remain in the repository pending dependency verification; they are not invoked by these modes. Do not treat offline expected images as proof of Paint execution.
 
 ## Updating from GitHub
 
