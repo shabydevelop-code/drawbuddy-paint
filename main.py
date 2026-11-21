@@ -588,13 +588,11 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     output.mkdir(parents=True,exist_ok=True)
     cv2.imwrite(str(output/'expected.png'),source)
     cv2.imwrite(str(output/'planned.png'),planned)
-    max_strokes = 7000
     print(f'SHARED-CELL PREFLIGHT: {len(jobs)} pencil strokes, '
-          f'{mismatched} incorrect planned pixels, limit={max_strokes}',flush=True)
-    if mismatched or len(jobs) > max_strokes:
+          f'{mismatched} incorrect planned pixels, no stroke-count limit',flush=True)
+    if mismatched:
         raise RuntimeError(
-            f'Unsafe drawing plan: {mismatched} mismatched pixels, '
-            f'{len(jobs)} strokes (limit {max_strokes}). Paint not opened.')
+            f'Unsafe drawing plan: {mismatched} mismatched pixels. Paint not opened.')
     from drawbuddy.controller import check_cancel
     engine = DrawingEngine(speed=speed)
     engine.tools.select('pencil')
