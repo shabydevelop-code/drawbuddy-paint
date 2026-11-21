@@ -715,8 +715,42 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             seed = region['seed']
             fill_point = (left+seed[0],top+seed[1])
             engine.paint.validate_canvas_points([fill_point])
-            engine.tools.select('bucket')
-            engine.canvas.fill(*fill_point)
+            # Compare canvas immediately before and after Bucket. A leaking
+            # boundary can flood the white background; checking only the
+            # intended region's interior would falsely accept that flood.
+            sx,sy = engine.paint.point(left,top)
+            before_shot = pg.screenshot()
+            if sx < 0 or sy < 0 or sx+w > before_shot.width or sy+h > before_shot.height:
+                raise RuntimeError('Bucket guard crop outside display')
+            before = np.asarray(
+                before_shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+            # Never fill if the seed already has the desired color:
+            # Paint may instead select a connected outside region.
+            seed_x,seed_y = seed
+            if np.array_equal(before[seed_y,seed_x],np.asarray(rgb,np.uint8)):
+                print(f'BUCKET SKIP: seed already colored for {rgb}',flush=True)
+            else:
+                engine.tools.select('bucket')
+                engine.canvas.fill(*fill_point)
+                after_shot = pg.screenshot()
+                after = np.asarray(
+                    after_shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+                changed = np.any(before != after,axis=2)
+                # Boundary pixels can be modified by anti-aliasing/contour
+                # overlap, but a bucket must not alter unrelated pixels.
+                allowed = cv2.dilate(region['mask'],
+                                     np.ones((3,3),np.uint8)) != 0
+                spill = changed & ~allowed
+                spill_count = int(np.count_nonzero(spill))
+                if spill_count:
+                    # Undo the unsafe bucket immediately; never proceed
+                    # to the next region with a flooded canvas.
+                    pg.hotkey('ctrl','z')
+                    raise RuntimeError(
+                        f'BUCKET SPILL: color {rgb}, region '
+                        f'{index}/{len(batch)}, {spill_count} pixels '
+                        'changed outside intended region. Fill undone; '
+                        'stopped before next region.')
             # Verify the region's interior, not its edge (the latter may
             # legitimately be repainted by a later neighboring region).
             core = cv2.erode(region['mask'],
