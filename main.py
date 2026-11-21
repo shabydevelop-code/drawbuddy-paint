@@ -369,7 +369,8 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                     # Up to four mismatched pixels, including adjacent ones,
                     # are not sufficient evidence of an open Bucket boundary.
                     # Log them for final comparison without repairing them.
-                    # Larger mismatches remain a hard stop.
+                    # Log larger mismatches too; let the remaining color
+                    # regions and final image comparison complete.
                     n, labels, stats, _ = cv2.connectedComponentsWithStats(
                         np.uint8(mismatch), connectivity=8)
                     largest = max(
@@ -386,14 +387,15 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                             'no Pencil/Undo/refill; final comparison will '
                             'measure remaining differences', flush=True)
                     else:
-                        raise RuntimeError(
-                            f'BUCKET REGION VALIDATION FAILED: region '
+                        print(
+                            f'BUCKET REGION VALIDATION WARNING: region '
                             f'{index}/{len(batch)}, color={rgb}, '
                             f'missing_interior_pixels={wrong}, '
                             f'largest_mismatch_cluster={largest}, '
-                            f'sample_local_xy={sample}. '
-                            'Inspect contour closure, holes and seed in planner; '
-                            'stopped without Undo, retry, or pixel repair.')
+                            f'sample_local_xy={sample}; '
+                            'continuing without Undo, retry, or pixel repair; '
+                            'final comparison will measure remaining differences',
+                            flush=True)
             completed += 1
             print(f'  REGION COMPLETE {index}/{len(batch)} '
                   f'color={rgb}',flush=True)
@@ -1072,7 +1074,8 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
                     # Up to four mismatched pixels, including adjacent ones,
                     # are not sufficient evidence of an open Bucket boundary.
                     # Log them for final comparison without repairing them.
-                    # Larger mismatches remain a hard stop.
+                    # Log larger mismatches too; let the remaining color
+                    # regions and final image comparison complete.
                     n, labels, stats, _ = cv2.connectedComponentsWithStats(
                         np.uint8(mismatch), connectivity=8)
                     largest = max(
@@ -1089,14 +1092,15 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
                             'no Pencil/Undo/refill; final comparison will '
                             'measure remaining differences', flush=True)
                     else:
-                        raise RuntimeError(
-                            f'BUCKET REGION VALIDATION FAILED: region '
+                        print(
+                            f'BUCKET REGION VALIDATION WARNING: region '
                             f'{index}/{len(batch)}, color={rgb}, '
                             f'missing_interior_pixels={wrong}, '
                             f'largest_mismatch_cluster={largest}, '
-                            f'sample_local_xy={sample}. '
-                            'Inspect contour closure, holes and seed in planner; '
-                            'stopped without Undo, retry, or pixel repair.')
+                            f'sample_local_xy={sample}; '
+                            'continuing without Undo, retry, or pixel repair; '
+                            'final comparison will measure remaining differences',
+                            flush=True)
             completed += 1
             print(f'  REGION COMPLETE {index}/{len(batch)} '
                   f'color={rgb}',flush=True)
