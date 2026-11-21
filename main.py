@@ -25,7 +25,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     if (data.get('format') != 'drawbuddy-paint-stroke-plan-v1'
             or not isinstance(w,int) or not isinstance(h,int)
             or not 1 <= w <= 500 or not 1 <= h <= 547):
-        raise ValueError('Invalid 16-color pixel plan')
+        raise ValueError('Invalid image stroke plan')
     # White is implicit canvas background. The stroke plan may omit its runs;
     # do not require one explicit group entry for every pixel.
     source = np.full((h,w,3),255,np.uint8)
@@ -800,7 +800,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
 
 def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
                       black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None):
-    """Convert a lossless <=16-color image to the generic contour/Bucket engine."""
+    ""Convert an exact-RGB image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
     image = cv2.imread(str(source_path),cv2.IMREAD_COLOR)
@@ -811,9 +811,6 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
         raise ValueError('Source must be at most 500x547; no automatic resizing')
     rgb = cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
     colors,counts = np.unique(rgb.reshape(-1,3),axis=0,return_counts=True)
-    if len(colors) > 16:
-        raise ValueError(f'Source has {len(colors)} colors (maximum 16). '
-                         'Refusing lossy palette reduction.')
     groups = []
     for color,count in zip(colors,counts):
         color = tuple(int(v) for v in color)
@@ -837,7 +834,7 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
     if logs:
         output = output_dir or Path('output/pixel-map')
         output.mkdir(parents=True,exist_ok=True)
-        plan_path = output/'pixel-map-paint-plan16.json'
+        plan_path = output/'pixel-map-paint-plan.json'
         plan_path.write_text(json.dumps(plan,separators=(',',':')),encoding='utf-8')
     print(f'SOURCE IMAGE: {source_path}, {w}x{h}, {len(colors)} exact colors; '
           'using existing full contour/Bucket engine',flush=True)
@@ -848,7 +845,7 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
 def main():
     parser = argparse.ArgumentParser(description='Draw a source image in Microsoft Paint using Pencil contours and Bucket fills.')
     parser.add_argument('--source-image', type=Path, required=True,
-                        help='Exact-color source image (up to 16 colors)')
+                        help='Exact-RGB source image (no palette reduction)')
     parser.add_argument('--speed', type=float, default=20,
                         help='Drawing speed multiplier (0..100)')
     parser.add_argument('--logs', action='store_true',
