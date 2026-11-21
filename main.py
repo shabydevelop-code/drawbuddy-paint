@@ -434,9 +434,10 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         fallback_completed += 1
         if fallback_completed % 200 == 0:
             print(f'BUCKET FALLBACK: {fallback_completed}/{len(fallback_jobs)}',flush=True)
-    # Black base already supplies the dark outlines. Do not run the
-    # optional fine Pencil restoration at the end of the normal workflow.
-    # Preserve verification and report missing dark pixels without drawing.
+    # Restore source-defined ink boundaries after color layers. Black Base
+    # is not sufficient: subsequent color contours and Bucket fills can
+    # overwrite one-pixel outlines. Trace connected ink contours as complete
+    # Pencil gestures; never print the black mask as scanline/pixel runs.
     sx,sy = engine.paint.point(left,top)
     screenshot = pg.screenshot()
     if sx < 0 or sy < 0 or sx+w > screenshot.width or sy+h > screenshot.height:
@@ -449,8 +450,39 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     black_planned = 0
     black_strokes = 0
     ink_restored = 0
-    print(f'FINAL BLACK PENCIL DISABLED: {ink_unresolved} dark pixels '
-          'currently differ; verification only',flush=True)
+    if ink_unresolved:
+        print(f'FINAL INK RESTORATION: {ink_unresolved} missing dark pixels; '
+              'retrace source ink contours',flush=True)
+        engine.colors.select_rgb(outline_rgb)
+        previous_rgb = outline_rgb
+        engine.tools.select('pencil')
+        engine.stroke_size.select(1)
+        # Preserve complete contours rather than breaking a stroke whenever
+        # a pixel is already black. This also repairs broken window borders.
+        ink_contours,_ = cv2.findContours(
+            np.uint8(expected_dark)*255,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
+        for contour in sorted(ink_contours,key=cv2.arcLength,reverse=True):
+            check_cancel()
+            points = [tuple(map(int,p[0])) for p in contour]
+            if not points:
+                continue
+            if not any(not actual_dark[y,x] for x,y in points):
+                continue
+            if len(points) > 2:
+                points.append(points[0])
+            mapped = [(left+x,top+y) for x,y in points]
+            if len(mapped) == 1:
+                mapped *= 2
+            engine.paint.validate_canvas_points(mapped)
+            engine.paint.stroke(mapped,duration=0.012)
+            black_planned += 1
+            black_strokes += 1
+        screenshot = pg.screenshot()
+        actual = np.asarray(screenshot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+        actual_dark = np.all(actual <= 40,axis=2)
+        ink_restored = ink_unresolved - int(np.count_nonzero(expected_dark & ~actual_dark))
+        print(f'FINAL INK VERIFY: restored={ink_restored}, '
+              f'remaining={ink_unresolved-ink_restored}',flush=True)
     # Last nested layer: white glints inside black eyes. Keep them after
     # the dark ink pass; do not globally paint white before black.
     if white_after_ink:
@@ -663,6 +695,8 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     repair_strokes = len(gap_jobs)
     report = compare_paint_canvas(engine.paint,output/'expected.png',
                                   w,h,left,top,output=output,tolerance=0)
+    # A completed drawing is not a passed 1:1 test unless every pixel agrees.
+    # Persist the comparison report before rejecting the drawing.
     report['test'] = 'full dog: color boundaries separate from black source-pixel ink'
     report['region_count'] = len(regions)
     report['unsafe_bucket_regions'] = len(unsafe_regions)
@@ -672,10 +706,10 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     report['thick_outline_regions'] = thick_outline_regions
     report['thick_outline_size_preset'] = 1
     report['black_centerline_components'] = 0
-    report['black_ink_method'] = 'single black source-mask raster pass; no black buckets or double contours'
+    report['black_ink_method'] = 'source ink contour restoration after color layers'
     report['black_ink_planned_runs'] = black_planned
     report['black_ink_completed_runs'] = black_strokes
-    report['black_ink_safety_limit'] = 0  # Final black Pencil pass is disabled
+    report['black_ink_safety_limit'] = None  # No arbitrary stroke cap; verify actual Paint pixels
     report['thick_outline_min_area'] = None
     report['thin_regions'] = len(details)
     report['narrow_pencil_regions'] = len(narrow_regions)
@@ -693,6 +727,11 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     report['pixel_finish'] = finish_stats
     report['black_gap_finish'] = black_gap_stats
     (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+    if report['error_pixels'] != 0:
+        raise RuntimeError(
+            f'PAINT 1:1 FAILED: {report["error_pixels"]} mismatching pixels; '
+            f'exact match={report["exact_pixel_match_percent"]}%. '
+            f'Inspect {output / "error-overlay.png"} and {output / "report.json"}.')
     print(f'FULL DOG DONE: exact match={report["exact_pixel_match_percent"]}%, '
           f'errors={report["error_pixels"]}; output={output}')
 
