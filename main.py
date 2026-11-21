@@ -510,7 +510,32 @@ def execute_continuous_path_test(path, speed, limit):
     for i, points in enumerate(mapped, 1):
         engine.paint.stroke(points, duration=0.012)
         print(f'Continuous path {i}/{limit} complete')
-    print(f'DONE: {limit} continuous paths in {time.perf_counter()-start:.1f}s; inspect Paint.')
+    elapsed = time.perf_counter()-start
+    print(f'DONE: {limit} continuous paths in {elapsed:.1f}s')
+    # Compare the *selected* paths, not the entire dog: this is a smoke test.
+    # Build an exact RGB target on white at the same 500x547 image coordinates.
+    import cv2
+    import numpy as np
+    from compare_images import compare_paint_canvas
+    expected = np.full((height, width, 3), 255, dtype=np.uint8)
+    for points in selected:
+        for a, b in zip(points, points[1:]):
+            cv2.line(expected, tuple(a), tuple(b), rgb[::-1], 1, cv2.LINE_8)
+    output = Path('output/comparison/continuous-path-test')
+    output.mkdir(parents=True, exist_ok=True)
+    reference_path = output / 'expected.png'
+    cv2.imwrite(str(reference_path), expected)
+    engine.paint.refresh_display()
+    result = compare_paint_canvas(engine.paint, reference_path, width, height,
+                                  left, top, output=output, tolerance=0)
+    result['test_paths'] = limit
+    result['elapsed_seconds'] = round(elapsed, 3)
+    result['comparison_scope'] = 'selected paths on blank white canvas only'
+    (output / 'report.json').write_text(
+        json.dumps(result, indent=2), encoding='utf-8')
+    print(f'EXACT 1:1 RGB MATCH: {result["exact_pixel_match_percent"]}% '
+          f'({result["error_pixels"]} mismatched pixels)')
+    print(f'Inspect {output / "error-overlay.png"} and {output / "report.json"}')
 
 
 def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None, color_test=False, region_test=False, gap_test=False):
