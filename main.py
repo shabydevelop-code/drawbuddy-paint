@@ -532,11 +532,8 @@ def draw_full_dog_bucket(plan_path, speed):
             dist = cv2.distanceTransform(component,cv2.DIST_L2,3)
             _,radius,_,seed = cv2.minMaxLoc(dist)
             is_black = rgb == (0,0,0)
-            if is_black and (radius < 2.5 or area < 30):
-                # Preserve short, meaningful black details including toes.
-                # Never bucket-fill a narrow black mark.
-                if area >= 2:
-                    details.append({'rgb':rgb,'area':area,'contour':contour})
+            if is_black:
+                details.append({'rgb':rgb,'area':area,'component':component})
                 continue
             if area < 8:
                 omitted_pixels += area
@@ -609,7 +606,7 @@ def draw_full_dog_bucket(plan_path, speed):
         engine.tools.select('pencil')
         # Controlled trial: Paint size preset 2 only for broad, nonblack
         # color regions. Keep black outlines and small details at size 1.
-        thick_outline = region['area'] >= 1000 and rgb not in ((0,0,0),(255,255,255))
+        thick_outline = False
         engine.stroke_size.select(2 if thick_outline else 1)
         if thick_outline:
             thick_outline_regions += 1
@@ -636,6 +633,55 @@ def draw_full_dog_bucket(plan_path, speed):
             previous_rgb = rgb
             color_switches += 1
         engine.tools.select('pencil')
+        if 'component' in detail:
+            # Morphological skeleton: a single centerline for black ink.
+            remaining = detail['component'].copy()
+            skeleton = np.zeros_like(remaining)
+            kernel = cv2.getStructuringElement(cv2.MORPH_CROSS,(3,3))
+            while cv2.countNonZero(remaining):
+                eroded = cv2.erode(remaining,kernel)
+                opened = cv2.dilate(eroded,kernel)
+                skeleton = cv2.bitwise_or(skeleton,cv2.subtract(remaining,opened))
+                remaining = eroded
+            yy,xx = np.where(skeleton != 0)
+            pixels = set(zip(xx.tolist(),yy.tolist()))
+            adjacency = {}
+            for x,y in pixels:
+                adjacency[(x,y)] = [q for dx,dy in ((1,0),(-1,0),(0,1),(0,-1),(1,1),(-1,1),(1,-1),(-1,-1))
+                                    for q in [(x+dx,y+dy)] if q in pixels
+                                    and (not dx or not dy or
+                                         ((x+dx,y) not in pixels and (x,y+dy) not in pixels))]
+            edges = {frozenset((pt,q)) for pt,neighbors in adjacency.items() for q in neighbors}
+            paths = []
+            while edges:
+                degrees = {}
+                for edge in edges:
+                    for node in edge:
+                        degrees[node] = degrees.get(node,0)+1
+                endpoints = [node for node,degree in degrees.items() if degree == 1]
+                current = min(endpoints if endpoints else degrees,key=lambda q:(q[1],q[0]))
+                path = [current]
+                while True:
+                    neighbors = [q for q in adjacency[current] if frozenset((current,q)) in edges]
+                    if not neighbors:
+                        break
+                    nxt = neighbors[0]
+                    edges.remove(frozenset((current,nxt)))
+                    path.append(nxt)
+                    current = nxt
+                    if sum(frozenset((current,q)) in edges for q in adjacency[current]) != 1:
+                        break
+                paths.append(path)
+            if not paths and pixels:
+                paths = [[pt] for pt in pixels]
+            for points in paths:
+                mapped = [(left+x,top+y) for x,y in points]
+                engine.paint.validate_canvas_points(mapped)
+                if len(mapped) == 1:
+                    engine.canvas.fill(*mapped[0])
+                elif len(mapped) > 1:
+                    engine.paint.stroke(mapped,duration=0.012)
+            continue
         contour = detail['contour']
         points = [tuple(map(int,v[0])) for v in contour]
         if len(points) > 2:
@@ -654,8 +700,9 @@ def draw_full_dog_bucket(plan_path, speed):
     report['region_count'] = len(regions)
     report['completed_regions'] = completed
     report['thick_outline_regions'] = thick_outline_regions
-    report['thick_outline_size_preset'] = 2
-    report['thick_outline_min_area'] = 1000
+    report['thick_outline_size_preset'] = 1
+    report['black_centerline_components'] = sum('component' in d for d in details)
+    report['thick_outline_min_area'] = None
     report['thin_regions'] = len(details)
     report['omitted_tiny_pixels'] = omitted_pixels
     report['color_switches'] = color_switches
