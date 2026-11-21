@@ -919,73 +919,59 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         fallback_completed += 1
         if fallback_completed % 200 == 0:
             print(f'BUCKET FALLBACK: {fallback_completed}/{len(fallback_jobs)}',flush=True)
-    # Restore dark source ink AFTER all bucket fills. Do not use horizontal
-    # raster runs or skip the entire ink pass due to an arbitrary budget.
-    # Near-black source colors are ink too, not broad bucket regions.
-    ink_components = []
-    for ink_rgb,ink_mask in groups:
-        if max(ink_rgb) > 24:
-            continue
-        count,labels,stats,_ = cv2.connectedComponentsWithStats(
-            ink_mask,connectivity=8)
-        for component_id in range(1,count):
-            component = np.uint8(labels == component_id)*255
-            ink_components.append((ink_rgb,component,
-                                   int(stats[component_id,cv2.CC_STAT_AREA])))
-    print(f'FINAL INK STAGE: {len(ink_components)} connected dark details',flush=True)
+    # The black silhouette is already painted with Bucket. Never retrace
+    # every source-ink component: that doubles outlines and creates jagged
+    # edges. Only restore genuinely missing dark details INSIDE color fills.
+    sx,sy = engine.paint.point(left,top)
+    screenshot = pg.screenshot()
+    if sx < 0 or sy < 0 or sx+w > screenshot.width or sy+h > screenshot.height:
+        raise RuntimeError('Ink verification crop outside display')
+    actual = np.asarray(screenshot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+    source_rgb = source[:,:,::-1]
+    expected_dark = np.all(source_rgb <= 24,axis=2)
+    actual_dark = np.all(actual <= 40,axis=2)
+    missing_dark = np.uint8(expected_dark & ~actual_dark)*255
+    dark_count,dark_labels,dark_stats,_ = cv2.connectedComponentsWithStats(
+        missing_dark,connectivity=8)
+    black_planned = dark_count-1
     black_strokes = 0
-    black_planned = len(ink_components)
-    for ink_rgb,component,area in sorted(ink_components,key=lambda item:-item[2]):
+    ink_restored = 0
+    ink_unresolved = 0
+    for component_id in range(1,dark_count):
         check_cancel()
-        if ink_rgb != previous_rgb:
-            engine.colors.select_rgb(ink_rgb)
-            previous_rgb = ink_rgb
+        component = np.uint8(dark_labels == component_id)*255
+        area = int(dark_stats[component_id,cv2.CC_STAT_AREA])
+        # A long missing boundary means the base or an earlier color fill
+        # failed; never hide it with a full-image Pencil outline pass.
+        if area > 32:
+            ink_unresolved += area
+            print(f'MISSING DARK AREA NEEDS BOUNDARY FIX: '
+                  f'component={component_id} pixels={area}',flush=True)
+            continue
+        contours,_ = cv2.findContours(
+            component,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
+        if not contours:
+            continue
+        if previous_rgb != outline_rgb:
+            engine.colors.select_rgb(outline_rgb)
+            previous_rgb = outline_rgb
             color_switches += 1
         engine.tools.select('pencil')
         engine.stroke_size.select(1)
-        # Skeletonize thick source ink so each visible line is traced once,
-        # not twice along opposite contour edges.
-        skeleton = cv2.ximgproc.thinning(component) if hasattr(cv2,'ximgproc') else None
-        if skeleton is None:
-            # Morphological skeleton works without opencv-contrib.
-            skeleton = np.zeros_like(component)
-            work = component.copy()
-            kernel = cv2.getStructuringElement(cv2.MORPH_CROSS,(3,3))
-            while cv2.countNonZero(work):
-                eroded = cv2.erode(work,kernel)
-                opened = cv2.dilate(eroded,kernel)
-                skeleton = cv2.bitwise_or(
-                    skeleton,cv2.subtract(work,opened))
-                work = eroded
-        # Trace connected skeleton segments; do not change colors per point.
-        remaining = set(zip(*np.where(skeleton != 0)))
-        while remaining:
-            start = min(remaining)
-            stack = [start]
-            remaining.remove(start)
-            path = [start]
-            while stack:
-                y,x = stack[-1]
-                candidates = [(y+dy,x+dx) for dy,dx in
-                              ((-1,0),(0,-1),(0,1),(1,0),
-                               (-1,-1),(-1,1),(1,-1),(1,1))
-                              if (y+dy,x+dx) in remaining]
-                if candidates:
-                    nxt = candidates[0]
-                    remaining.remove(nxt)
-                    stack.append(nxt)
-                    path.append(nxt)
-                else:
-                    stack.pop()
-                    if stack:
-                        path.append(stack[-1])
-            if path:
-                mapped = [(left+x,top+y) for y,x in path]
-                engine.paint.validate_canvas_points(mapped)
-                engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
-                                    duration=0.012)
-                black_strokes += 1
-    print(f'FINAL INK COMPLETE: {black_strokes} contour strokes',flush=True)
+        for contour in contours:
+            path = [tuple(map(int,p[0])) for p in contour]
+            if len(path)>2:
+                path.append(path[0])
+            mapped = [(left+x,top+y) for x,y in path]
+            engine.paint.validate_canvas_points(mapped)
+            engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
+                                duration=0.012)
+            black_strokes += 1
+        ink_restored += area
+    print(f'SELECTIVE DARK DETAILS: {black_strokes} localized strokes, '
+          f'{ink_restored} missing pixels targeted, '
+          f'{ink_unresolved} unresolved pixels; no global black retrace',
+          flush=True)
     # Last nested layer: white glints inside black eyes. Keep them after
     # the dark ink pass; do not globally paint white before black.
     if white_after_ink:
