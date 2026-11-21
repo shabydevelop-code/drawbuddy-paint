@@ -470,17 +470,19 @@ def execute_continuous_path_test(path, speed, limit):
             or not isinstance(data.get('groups'), list)):
         raise ValueError('Invalid path file. Run python pixel_map.py --analyze-continuous')
     left, top = 250 + (500 - width)//2, 155 + (547 - height)//2
-    groups = []
+    candidates = []
     for group in data['groups']:
+        color = group.get('rgb')
+        if not isinstance(color, str) or len(color) != 7 or not color.startswith('#'):
+            raise ValueError('Invalid RGB color in path file')
         try:
-            rgb = tuple(bytes.fromhex(group['rgb'].lstrip('#')))
-        except (ValueError, KeyError) as exc:
+            rgb = tuple(bytes.fromhex(color[1:]))
+        except ValueError as exc:
             raise ValueError('Invalid RGB color in path file') from exc
         if len(rgb) != 3:
             raise ValueError('Invalid RGB color in path file')
-        paths = []
         for points in group.get('paths', []):
-            if not 12 <= len(points) <= 180:
+            if not isinstance(points, list) or len(points) < 2:
                 continue
             if any(not isinstance(p, list) or len(p) != 2
                    or any(type(v) is not int for v in p)
@@ -490,24 +492,27 @@ def execute_continuous_path_test(path, speed, limit):
             if any((a[0] != b[0] and a[1] != b[1])
                    for a, b in zip(points, points[1:])):
                 raise ValueError('Diagonal continuous path segment')
-            paths.append(points)
-        if len(paths) >= limit:
-            groups.append((rgb, paths))
-    if not groups:
-        raise ValueError(f'No color has {limit} eligible paths of 12-180 points')
-    rgb, paths = max(groups, key=lambda item: sum(map(len, item[1])))
-    selected = sorted(paths, key=len, reverse=True)[:limit]
-    mapped = [[(left+x, top+y) for x,y in points] for points in selected]
-    print(f'CONTINUOUS PAINT TEST: {limit} paths, RGB={rgb}, lengths={[len(p) for p in selected]}')
+            candidates.append((rgb, points))
+    if len(candidates) < limit:
+        raise ValueError(f'Only {len(candidates)} drawable paths; requested {limit}')
+    # Select distinct paths in original plan order, preserving their colors.
+    selected = candidates[:limit]
+    mapped = [(rgb, [(left+x, top+y) for x,y in points])
+              for rgb, points in selected]
+    print(f'CONTINUOUS PAINT TEST: {limit} paths, '
+          f'{len(set(rgb for rgb, _ in selected))} colors')
     print('Open a NEW blank white maximized Paint canvas. F8 cancels.')
     engine = DrawingEngine(speed=speed)
-    for points in mapped:
+    for _, points in mapped:
         engine.paint.validate_canvas_points(points)
     engine.tools.select('pencil')
     engine.stroke_size.select(1)
-    engine.colors.select_rgb(rgb)
     start = time.perf_counter()
-    for i, points in enumerate(mapped, 1):
+    current_rgb = None
+    for i, (rgb, points) in enumerate(mapped, 1):
+        if rgb != current_rgb:
+            engine.colors.select_rgb(rgb)
+            current_rgb = rgb
         engine.paint.stroke(points, duration=0.012)
         print(f'Continuous path {i}/{limit} complete')
     elapsed = time.perf_counter()-start
@@ -518,7 +523,7 @@ def execute_continuous_path_test(path, speed, limit):
     import numpy as np
     from compare_images import compare_paint_canvas
     expected = np.full((height, width, 3), 255, dtype=np.uint8)
-    for points in selected:
+    for rgb, points in selected:
         for a, b in zip(points, points[1:]):
             cv2.line(expected, tuple(a), tuple(b), rgb[::-1], 1, cv2.LINE_8)
     output = Path('output/comparison/continuous-path-test')
