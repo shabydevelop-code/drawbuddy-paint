@@ -505,7 +505,10 @@ def draw_full_dog_bucket(plan_path, speed):
     # recovered by the contour/bucket planner when necessary.
     white_mask = np.uint8(occupied == 0)*255
     groups.append(((255,255,255),white_mask))
+    # Stage 1: paint broad color surfaces. Stage 2: draw fine black
+    # features LAST, so feet/toe lines are never covered by later fills.
     regions = []
+    details = []
     omitted_pixels = 0
     for rgb,mask in groups:
         n,labels,stats,_ = cv2.connectedComponentsWithStats(mask,8)
@@ -513,57 +516,49 @@ def draw_full_dog_bucket(plan_path, speed):
             area = int(stats[idx,cv2.CC_STAT_AREA])
             component = np.uint8(labels == idx)*255
             if rgb == (255,255,255):
-                # White is already the canvas. Never paint the external
-                # background as an enormous white region.
                 if np.any(component[0,:]) or np.any(component[-1,:]) or np.any(component[:,0]) or np.any(component[:,-1]):
                     continue
-            if area < 5:
-                # Omit isolated pixel noise, rather than switching colors
-                # thousands of times for imperceptible single pixels.
-                omitted_pixels += area
-                continue
             contours,_ = cv2.findContours(component,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
             if not contours:
                 continue
             contour = max(contours,key=cv2.contourArea)
             dist = cv2.distanceTransform(component,cv2.DIST_L2,3)
             _,radius,_,seed = cv2.minMaxLoc(dist)
+            is_black = rgb == (0,0,0)
+            if is_black and (radius < 2.5 or area < 30):
+                # Preserve short, meaningful black details including toes.
+                # Never bucket-fill a narrow black mark.
+                if area >= 2:
+                    details.append({'rgb':rgb,'area':area,'contour':contour})
+                continue
+            if area < 8:
+                omitted_pixels += area
+                continue
             if radius < 2.0 or cv2.contourArea(contour) < 3:
-                # Thin structures cannot hold a bucket fill after pencil
-                # borders. Follow their medial pixels with a pencil instead.
-                skeleton = np.zeros_like(component)
-                remaining = component.copy()
-                kernel = cv2.getStructuringElement(cv2.MORPH_CROSS,(3,3))
-                while cv2.countNonZero(remaining):
-                    opened = cv2.morphologyEx(remaining,cv2.MORPH_OPEN,kernel)
-                    skeleton = cv2.bitwise_or(skeleton,cv2.subtract(remaining,opened))
-                    remaining = cv2.erode(remaining,kernel)
-                lines,_ = cv2.findContours(skeleton,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
-                paths = []
-                for line in lines:
-                    pts = [tuple(map(int,p[0])) for p in line]
-                    if pts:
-                        paths.append(pts)
-                regions.append({'area':area,'rgb':rgb,'kind':'thin','paths':paths})
-            else:
-                pts = [tuple(map(int,p[0])) for p in contour]
-                pts.append(pts[0])
-                regions.append({'area':area,'rgb':rgb,'kind':'bucket','paths':[pts],
-                                'seed':seed})
-    # Preserve coarse-to-fine layering while batching colors within each
-    # size tier. This sharply reduces color-dialog switches in fine details.
+                # No bucket on thin regions. Trace their real component
+                # perimeter once; avoid morphology-generated scribble loops.
+                if area >= 12:
+                    details.append({'rgb':rgb,'area':area,'contour':contour})
+                else:
+                    omitted_pixels += area
+                continue
+            pts = [tuple(map(int,p[0])) for p in contour]
+            pts.append(pts[0])
+            regions.append({'area':area,'rgb':rgb,'paths':[pts],'seed':seed})
     def tier(area):
         if area >= 1000: return 0
         if area >= 100: return 1
-        if area >= 20: return 2
-        return 3
+        return 2
+    # Coarse-to-fine, group by RGB inside each tier to reduce UI dialogs.
     regions.sort(key=lambda x:(tier(x['area']),x['rgb'],-x['area']))
+    # Nonblack thin marks first, black details last, irrespective of size.
+    details.sort(key=lambda x:(x['rgb'] == (0,0,0),x['rgb'],-x['area']))
     left,top = 250+(500-w)//2,155+(547-h)//2
     output = Path('output/comparison/full-dog-bucket')
     output.mkdir(parents=True,exist_ok=True)
     cv2.imwrite(str(output/'expected.png'),source)
-    print(f'FULL DOG HYBRID: {len(regions)} regions, {len(groups)} colors, '
-          f'{omitted_pixels} tiny pixels intentionally omitted')
+    print(f'FULL DOG: {len(regions)} fill regions, {len(details)} thin details, '
+          f'{omitted_pixels} noise pixels omitted; black details last')
     print('Open a NEW blank white maximized Paint canvas. F8 cancels.')
     engine = DrawingEngine(speed=speed)
     engine.stroke_size.select(1)
@@ -571,7 +566,6 @@ def draw_full_dog_bucket(plan_path, speed):
     completed = 0
     color_switches = 0
     previous_rgb = None
-    thin_count = 0
     for region in regions:
         check_cancel()
         rgb = region['rgb']
@@ -583,29 +577,46 @@ def draw_full_dog_bucket(plan_path, speed):
         for path in region['paths']:
             mapped = [(left+x,top+y) for x,y in path]
             engine.paint.validate_canvas_points(mapped)
-            if len(mapped) == 1:
-                engine.canvas.fill(*mapped[0])
-            elif len(mapped) > 1:
-                engine.paint.stroke(mapped,duration=0.012)
-        if region['kind'] == 'bucket':
-            seed = region['seed']
-            fill_point = (left+seed[0],top+seed[1])
-            engine.paint.validate_canvas_points([fill_point])
-            engine.tools.select('bucket')
-            engine.canvas.fill(*fill_point)
-        else:
-            thin_count += 1
+            engine.paint.stroke(mapped,duration=0.012)
+        seed = region['seed']
+        fill_point = (left+seed[0],top+seed[1])
+        engine.paint.validate_canvas_points([fill_point])
+        engine.tools.select('bucket')
+        engine.canvas.fill(*fill_point)
         completed += 1
         if completed % 50 == 0:
-            print(f'  FULL DOG progress: {completed}/{len(regions)}, '
-                  f'color switches={color_switches}')
+            print(f'  Fills: {completed}/{len(regions)}, color switches={color_switches}')
+    # Fine details are never bucket-filled. Trace each contour once and
+    # simplify mildly to avoid repeated jitter around individual pixels.
+    for i,detail in enumerate(details,1):
+        check_cancel()
+        rgb = detail['rgb']
+        if rgb != previous_rgb:
+            engine.colors.select_rgb(rgb)
+            previous_rgb = rgb
+            color_switches += 1
+        engine.tools.select('pencil')
+        contour = detail['contour']
+        epsilon = 0.45 if rgb == (0,0,0) else 0.8
+        simplified = cv2.approxPolyDP(contour,epsilon,True).reshape(-1,2)
+        points = [tuple(map(int,p)) for p in simplified]
+        if len(points) > 2:
+            points.append(points[0])
+        mapped = [(left+x,top+y) for x,y in points]
+        engine.paint.validate_canvas_points(mapped)
+        if len(mapped) == 1:
+            engine.canvas.fill(*mapped[0])
+        elif len(mapped) > 1:
+            engine.paint.stroke(mapped,duration=0.012)
+        if i % 50 == 0:
+            print(f'  Details: {i}/{len(details)}')
     engine.paint.refresh_display()
     report = compare_paint_canvas(engine.paint,output/'expected.png',
                                   w,h,left,top,output=output,tolerance=0)
-    report['test'] = 'full dog hybrid: bucket regions and thin pencil strokes'
+    report['test'] = 'full dog: broad fills followed by thin details and black lines'
     report['region_count'] = len(regions)
     report['completed_regions'] = completed
-    report['thin_regions'] = thin_count
+    report['thin_regions'] = len(details)
     report['omitted_tiny_pixels'] = omitted_pixels
     report['color_switches'] = color_switches
     report['elapsed_seconds'] = round(time.perf_counter()-started,3)
