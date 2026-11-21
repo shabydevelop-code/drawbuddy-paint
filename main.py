@@ -803,9 +803,14 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
     ""Convert an exact-RGB image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
+    import time
+    timing_start = time.perf_counter()
+    stage_start = timing_start
     image = cv2.imread(str(source_path),cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError(f'Cannot read source image: {source_path}')
+    load_seconds = time.perf_counter() - stage_start
+    stage_start = time.perf_counter()
     h,w = image.shape[:2]
     scale = min(1.0, 550 / w, 500 / h)
     if scale < 1.0:
@@ -815,8 +820,12 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
         print(f'SOURCE RESIZED: {w}x{h} -> {new_w}x{new_h} '
               '(proportional fit, no cropping)', flush=True)
         w,h = new_w,new_h
+    resize_seconds = time.perf_counter() - stage_start
+    stage_start = time.perf_counter()
     rgb = cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
     colors,counts = np.unique(rgb.reshape(-1,3),axis=0,return_counts=True)
+    color_seconds = time.perf_counter() - stage_start
+    stage_start = time.perf_counter()
     groups = []
     for color,count in zip(colors,counts):
         color = tuple(int(v) for v in color)
@@ -832,6 +841,8 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
                 strokes.append([int(run[0]),y,int(run[-1]),y])
         groups.append({'rgb':'#%02X%02X%02X'%color,
                        'pixels':int(count),'strokes':strokes})
+    runs_seconds = time.perf_counter() - stage_start
+    stage_start = time.perf_counter()
     plan = {
         'format':'drawbuddy-paint-stroke-plan-v1','width':w,'height':h,
         'coordinate_system':'image-local-zero-based','background':'white-prefilled',
@@ -842,6 +853,21 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
         output.mkdir(parents=True,exist_ok=True)
         plan_path = output/'pixel-map-paint-plan.json'
         plan_path.write_text(json.dumps(plan,separators=(',',':')),encoding='utf-8')
+    serialize_seconds = time.perf_counter() - stage_start
+    source_timings = {
+        'load_image_seconds': round(load_seconds, 3),
+        'resize_image_seconds': round(resize_seconds, 3),
+        'identify_rgb_colors_seconds': round(color_seconds, 3),
+        'build_color_runs_seconds': round(runs_seconds, 3),
+        'serialize_plan_seconds': round(serialize_seconds, 3),
+        'total_source_preparation_seconds': round(time.perf_counter() - timing_start, 3),
+        'distinct_rgb_colors': len(colors),
+        'color_groups': len(groups),
+    }
+    print('SOURCE PREPARATION TIMING:', json.dumps(source_timings), flush=True)
+    if logs:
+        (output/'source-preparation-timing.json').write_text(
+            json.dumps(source_timings, indent=2), encoding='utf-8')
     print(f'SOURCE IMAGE: {source_path}, {w}x{h}, {len(colors)} exact colors; '
           'using existing full contour/Bucket engine',flush=True)
     draw_image_bucket(plan_path if logs else plan,speed,pixel_finish,finish_limit,
