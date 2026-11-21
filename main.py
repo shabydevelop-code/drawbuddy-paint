@@ -550,7 +550,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                 continue
             pts = [tuple(map(int,p[0])) for p in contour]
             pts.append(pts[0])
-            regions.append({'area':area,'rgb':rgb,'paths':[pts],'seed':seed})
+            regions.append({'area':area,'rgb':rgb,'paths':[pts],'seed':seed,'mask':component})
     # Pixel-level plan verification: a closed contour alone is not proof
     # that Paint bucket will cover the component. Simulate each region mask
     # and reject unsafe bucket plans before any UI operation.
@@ -571,11 +571,23 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     regions = safe_regions
     print(f'BUCKET PREFLIGHT: {len(safe_regions)} safe regions, '
           f'{len(unsafe_regions)} rejected for crossing source colors',flush=True)
-    if unsafe_regions:
-        # Fail closed rather than produce a misleading partial picture.
+    # Unsafe bucket regions are rendered with exact source-color row runs.
+    # Never let a contour cross another color; preflight the mouse budget.
+    fallback_jobs = []
+    for region,extra in unsafe_regions:
+        mask = region['mask']
+        for y in range(h):
+            xs = np.flatnonzero(mask[y])
+            if len(xs):
+                for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1):
+                    fallback_jobs.append((region['rgb'],y,int(run[0]),int(run[-1])))
+    fallback_limit = 1500
+    print(f'BUCKET FALLBACK PREFLIGHT: {len(fallback_jobs)} exact-color strokes '
+          f'for {len(unsafe_regions)} unsafe regions (limit {fallback_limit})',flush=True)
+    if len(fallback_jobs) > fallback_limit:
         raise RuntimeError(
-            f'Unsafe contour/bucket plan: {len(unsafe_regions)} regions cross '
-            'source color boundaries. Drawing aborted before opening Paint.')
+            f'Unsafe region fallback requires {len(fallback_jobs)} strokes, '
+            f'exceeding safety limit {fallback_limit}. No Paint actions started.')
     def tier(area):
         if area >= 1000: return 0
         if area >= 100: return 1
@@ -649,6 +661,25 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         completed += 1
         if completed % 50 == 0:
             print(f'  Fills: {completed}/{len(regions)}, color switches={color_switches}')
+    # Exact-color fallback for the rejected regions, after safe bucket fills.
+    fallback_completed = 0
+    for rgb,y,x0,x1 in fallback_jobs:
+        check_cancel()
+        if rgb != previous_rgb:
+            engine.colors.select_rgb(rgb)
+            previous_rgb = rgb
+            color_switches += 1
+        engine.tools.select('pencil')
+        engine.stroke_size.select(1)
+        mapped = [(left+x0,top+y),(left+x1,top+y)]
+        engine.paint.validate_canvas_points(mapped)
+        if x0 == x1:
+            engine.canvas.fill(*mapped[0])
+        else:
+            engine.paint.stroke(mapped,duration=0.008)
+        fallback_completed += 1
+        if fallback_completed % 200 == 0:
+            print(f'BUCKET FALLBACK: {fallback_completed}/{len(fallback_jobs)}',flush=True)
     # Final black ink pass. Black pixels are not bucket-filled and never
     # outlined on both sides. Horizontal runs cover their actual source area.
     # Preflight the complete plan before issuing any mouse events.
@@ -763,6 +794,9 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                                   w,h,left,top,output=output,tolerance=0)
     report['test'] = 'full dog: color boundaries separate from black source-pixel ink'
     report['region_count'] = len(regions)
+    report['unsafe_bucket_regions'] = len(unsafe_regions)
+    report['unsafe_bucket_fallback_strokes'] = fallback_completed
+    report['unsafe_bucket_fallback_limit'] = fallback_limit
     report['completed_regions'] = completed
     report['thick_outline_regions'] = thick_outline_regions
     report['thick_outline_size_preset'] = 1
