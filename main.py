@@ -461,6 +461,106 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
 
 
 
+
+def draw_full_dog_bucket(plan_path, speed):
+    """Full image: all color components, closed contours, Paint bucket, no raster strokes."""
+    import cv2
+    import numpy as np
+    import time
+    from drawbuddy.controller import check_cancel
+    data = json.loads(Path(plan_path).read_text(encoding='utf-8'))
+    w, h = data.get('width'), data.get('height')
+    if (data.get('format') != 'drawbuddy-paint-stroke-plan-v1'
+            or not isinstance(w,int) or not isinstance(h,int)
+            or not 1 <= w <= 500 or not 1 <= h <= 547):
+        raise ValueError('Invalid 16-color pixel plan')
+    source = np.full((h,w,3),255,np.uint8)
+    groups = []
+    for group in data['groups']:
+        rgb = tuple(bytes.fromhex(group['rgb'][1:]))
+        mask = np.zeros((h,w),np.uint8)
+        for x0,y0,x1,y1 in group['strokes']:
+            if not 0 <= x0 <= x1 < w or not 0 <= y0 == y1 < h:
+                raise ValueError('Invalid run')
+            mask[y0,x0:x1+1] = 255
+            source[y0,x0:x1+1] = rgb[::-1]
+        groups.append((rgb,mask))
+    # Every pixel must belong to precisely one group, including background.
+    coverage = np.zeros((h,w),np.uint8)
+    for _,mask in groups:
+        coverage += (mask != 0).astype(np.uint8)
+    if not np.all(coverage == 1):
+        raise ValueError('Source color masks overlap or leave uncovered pixels')
+    regions = []
+    for rgb,mask in groups:
+        # Background white is already present; enclosed white islands must
+        # be restored after larger foreground regions are painted.
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(mask,8)
+        for idx in range(1,n):
+            area = int(stats[idx,cv2.CC_STAT_AREA])
+            component = np.uint8(labels == idx)*255
+            if rgb == (255,255,255) and np.any(component[0,:]) and np.any(component[-1,:]):
+                continue
+            contours,_ = cv2.findContours(component,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
+            if not contours:
+                continue
+            contour = max(contours,key=cv2.contourArea)
+            if len(contour) < 3 or cv2.contourArea(contour) < 1:
+                # Single-pixel islands are rendered as individual dots, not scans.
+                ys,xs = np.where(component)
+                regions.append((area,rgb,None,(int(xs[0]),int(ys[0]))))
+                continue
+            dist = cv2.distanceTransform(component,cv2.DIST_L2,3)
+            _,radius,_,seed = cv2.minMaxLoc(dist)
+            regions.append((area,rgb,contour,seed))
+    # Large-to-small painter's layering restores enclosed colored/white islands.
+    regions.sort(key=lambda r:-r[0])
+    left,top = 250+(500-w)//2,155+(547-h)//2
+    output = Path('output/comparison/full-dog-bucket')
+    output.mkdir(parents=True,exist_ok=True)
+    cv2.imwrite(str(output/'expected.png'),source)
+    print(f'FULL DOG BUCKET: {len(regions)} color components, {len(groups)} colors; '
+          'no horizontal raster strokes')
+    print('Open a NEW blank white maximized Paint canvas. F8 cancels.')
+    engine = DrawingEngine(speed=speed)
+    engine.stroke_size.select(1)
+    started = time.perf_counter()
+    completed = 0
+    # A contour must be filled before the next region: drawing every contour
+    # first makes adjacent colors mutually block or contaminate bucket fills.
+    for area,rgb,contour,seed in regions:
+        check_cancel()
+        engine.colors.select_rgb(rgb)
+        if contour is None:
+            point = (left+seed[0],top+seed[1])
+            engine.paint.validate_canvas_points([point])
+            engine.tools.select('pencil')
+            engine.canvas.fill(*point)
+        else:
+            points = [tuple(map(int,p[0])) for p in contour]
+            points.append(points[0])
+            mapped = [(left+x,top+y) for x,y in points]
+            fill_point = (left+seed[0],top+seed[1])
+            engine.paint.validate_canvas_points(mapped+[fill_point])
+            engine.tools.select('pencil')
+            engine.paint.stroke(mapped,duration=0.012)
+            engine.tools.select('bucket')
+            engine.canvas.fill(*fill_point)
+        completed += 1
+        if completed % 25 == 0:
+            print(f'  FULL DOG progress: {completed}/{len(regions)}')
+    engine.paint.refresh_display()
+    report = compare_paint_canvas(engine.paint,output/'expected.png',
+                                  w,h,left,top,output=output,tolerance=0)
+    report['test'] = 'complete dog via contours and Paint bucket'
+    report['region_count'] = len(regions)
+    report['completed_regions'] = completed
+    report['elapsed_seconds'] = round(time.perf_counter()-started,3)
+    (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+    print(f'FULL DOG DONE: exact match={report["exact_pixel_match_percent"]}%, '
+          f'errors={report["error_pixels"]}; output={output}')
+
+
 def draw_neighbor_regions_test(plan_path, speed):
     """Paint five nearby, hole-free color components: contour then bucket for each."""
     import cv2
@@ -965,6 +1065,7 @@ def main():
     parser.add_argument('--ear-contour-test', type=Path, help='Draw one real upper-head outline gesture from the pixel plan')
     parser.add_argument('--region-bucket-test', type=Path, help='Outline one real closed color region and fill it with Paint bucket')
     parser.add_argument('--neighbor-regions-test', type=Path, help='Draw and bucket-fill nearby distinct color regions')
+    parser.add_argument('--full-dog-bucket', type=Path, help='Draw entire color pixel map with closed contours and bucket fills')
     parser.add_argument('--continuous-paths', type=Path, help='Continuous-path analysis JSON')
     parser.add_argument('--continuous-path-test', type=int, choices=(1, 20), help='Draw 1 or 20 paths in Paint')
     parser.add_argument('--paint-plan-gap-test', action='store_true', help='Draw only two separated orange strokes to diagnose unwanted connector lines')
@@ -994,6 +1095,14 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
+    if args.full_dog_bucket is not None:
+        if args.neighbor_regions_test or args.region_bucket_test or args.ear_contour_test or args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
+            parser.error('--full-dog-bucket must be used alone')
+        speed = args.speed if args.speed is not None else 20
+        if not isinstance(speed,(int,float)) or not math.isfinite(speed) or not 0 < speed <= 100:
+            parser.error('Invalid drawing speed')
+        draw_full_dog_bucket(args.full_dog_bucket,float(speed))
+        return
     if args.neighbor_regions_test is not None:
         if args.region_bucket_test or args.ear_contour_test or args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
             parser.error('--neighbor-regions-test must be used alone')
