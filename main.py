@@ -809,7 +809,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
 
 def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, finish_limit=1500,
                       black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None,
-                      preview_only=False):
+                      preview_only=False, legacy_source=False):
     """Convert an exact-RGB image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
@@ -822,7 +822,9 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
     load_seconds = time.perf_counter() - stage_start
     stage_start = time.perf_counter()
     h,w = image.shape[:2]
-    scale = min(1.0, 550 / w, 500 / h)
+    if legacy_source and (w > 550 or h > 500):
+        raise ValueError(f'Legacy source requires an already reduced image (max 550x500); got {w}x{h}')
+    scale = 1.0 if legacy_source else min(1.0, 550 / w, 500 / h)
     if scale < 1.0:
         new_w = max(1, min(550, int(w * scale)))
         new_h = max(1, min(500, int(h * scale)))
@@ -833,14 +835,22 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
     resize_seconds = time.perf_counter() - stage_start
     stage_start = time.perf_counter()
     rgb = cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
+    if legacy_source:
+        exact_colors = len(np.unique(rgb.reshape(-1, 3), axis=0))
+        if exact_colors > 256:
+            raise ValueError(f'Legacy source has {exact_colors} exact colors; use an already reduced, limited-color dog image (max 256 colors)')
+        print(f'LEGACY SOURCE: original pixels preserved, {exact_colors} exact colors; no resize, quantization or background normalization', flush=True)
     original_black = np.all(rgb == (0, 0, 0), axis=2)
     original_white = np.all(rgb == (255, 255, 255), axis=2)
     reserved = int(original_black.any()) + int(original_white.any())
     if reserved and colors_limit < reserved:
         raise ValueError(f'--colors must be at least {reserved} to preserve existing black/white pixels')
-    from PIL import Image
+    if not legacy_source:
+        from PIL import Image
     palette_size = colors_limit - reserved
-    if palette_size == 0:
+    if legacy_source:
+        pass
+    elif palette_size == 0:
         if np.any(~(original_black | original_white)):
             raise ValueError('--colors is too small to represent nonblack/nonwhite pixels')
     else:
@@ -861,7 +871,8 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
     border_ids = border_ids[border_ids != 0]
     background = np.isin(component_labels, border_ids)
     background_pixels = int(np.count_nonzero(background & np.any(rgb != 255, axis=2)))
-    rgb[background] = (255, 255, 255)
+    if not legacy_source:
+        rgb[background] = (255, 255, 255)
     print(f'BORDER BACKGROUND: normalized {background_pixels} near-white pixels', flush=True)
     colors,counts = np.unique(rgb.reshape(-1,3),axis=0,return_counts=True)
     if preview_only:
@@ -986,6 +997,8 @@ def main():
                         help='Maximum palette colors after Median Cut (default: 50, range: 2..256)')
     parser.add_argument('--speed', type=float, default=20,
                         help='Drawing speed multiplier (0..100)')
+    parser.add_argument('--legacy-source', action='store_true',
+                        help='Use exact source pixels without resize, quantization or background normalization; requires <=550x500 and <=256 colors')
     parser.add_argument('--compare-preprocessing', action='store_true',
                         help='Compare resized versus quantized contours without Paint')
     parser.add_argument('--preview-only', action='store_true',
