@@ -945,6 +945,21 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             color_switches += 1
         for index,region in enumerate(white_after_ink,1):
             check_cancel()
+            # The black base and color layers can already leave this glint
+            # correctly white. Avoid redundant late Pencil movement in that
+            # case; preserve the original draw/fill path if it is missing.
+            sx,sy = engine.paint.point(left,top)
+            before = pg.screenshot()
+            actual_before = np.asarray(
+                before.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+            highlight_pixels = region['mask'] != 0
+            already_white = bool(np.all(
+                actual_before[highlight_pixels] == 255))
+            if already_white:
+                print(f'NESTED WHITE HIGHLIGHT ALREADY COMPLETE '
+                      f'{index}/{len(white_after_ink)}; skipping Pencil/Bucket',
+                      flush=True)
+                continue
             engine.tools.select('pencil')
             engine.stroke_size.select(1)
             for path in region['paths']:
