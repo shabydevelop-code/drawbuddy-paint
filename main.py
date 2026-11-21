@@ -462,7 +462,7 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
 
 
 
-def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500):
+def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120):
     """Full image: all color components, closed contours, Paint bucket, no raster strokes."""
     import time
     startup_clock = time.perf_counter()
@@ -730,6 +730,54 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             if index % 100 == 0:
                 print(f'PIXEL FINISH: {index}/{min(len(jobs),finish_limit)}',flush=True)
         print('PIXEL FINISH: verifying final image',flush=True)
+    black_gap_stats = {'enabled':bool(black_gap_finish),'planned_strokes':0,
+                       'attempted_strokes':0,'skipped_strokes':0}
+    if black_gap_finish:
+        # Repair only missing black ink, never legitimate white background
+        # or white details. Capture once and leave other colors untouched.
+        import pyautogui as pg
+        sx,sy = engine.paint.point(left,top)
+        screenshot = pg.screenshot()
+        if sx < 0 or sy < 0 or sx+w > screenshot.width or sy+h > screenshot.height:
+            raise RuntimeError('Black gap crop outside display')
+        actual = np.asarray(screenshot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+        target_black = np.all(source == 0,axis=2)
+        actual_white = np.all(actual >= 245,axis=2)
+        missing = np.uint8(target_black & actual_white)*255
+        black_gap_stats['missing_black_pixels'] = int(np.count_nonzero(missing))
+        count,labels,stats,_ = cv2.connectedComponentsWithStats(missing,8)
+        jobs = []
+        for i in range(1,count):
+            area = int(stats[i,cv2.CC_STAT_AREA])
+            if area < 3:
+                continue
+            component = np.uint8(labels == i)*255
+            contours,_ = cv2.findContours(component,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            if not contours:
+                continue
+            contour = max(contours,key=lambda c:len(c))
+            path = [(left+int(p[0][0]),top+int(p[0][1])) for p in contour]
+            if len(path) < 2 or len(path) > 240:
+                continue
+            jobs.append((area,path))
+        jobs.sort(key=lambda job:-job[0])
+        black_gap_stats['planned_strokes'] = len(jobs)
+        black_gap_stats['skipped_strokes'] = max(0,len(jobs)-black_gap_limit)
+        print(f'BLACK GAP FINISH: {black_gap_stats["missing_black_pixels"]} missing black pixels, '
+              f'{len(jobs)} paths, limit={black_gap_limit}',flush=True)
+        if jobs:
+            engine.colors.select_rgb((0,0,0))
+            previous_rgb = (0,0,0)
+            color_switches += 1
+            engine.tools.select('pencil')
+            engine.stroke_size.select(1)
+            for i,(_,path) in enumerate(jobs[:black_gap_limit],1):
+                check_cancel()
+                engine.paint.validate_canvas_points(path)
+                engine.paint.stroke(path,duration=0.008)
+                black_gap_stats['attempted_strokes'] = i
+                if i % 25 == 0:
+                    print(f'BLACK GAP FINISH: {i}/{min(len(jobs),black_gap_limit)}',flush=True)
     report = compare_paint_canvas(engine.paint,output/'expected.png',
                                   w,h,left,top,output=output,tolerance=0)
     report['test'] = 'full dog: color boundaries separate from black source-pixel ink'
@@ -754,6 +802,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     report['elapsed_seconds'] = round(time.perf_counter()-started,3)
     report['startup_timing'] = startup_timings
     report['pixel_finish'] = finish_stats
+    report['black_gap_finish'] = black_gap_stats
     (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(f'FULL DOG DONE: exact match={report["exact_pixel_match_percent"]}%, '
           f'errors={report["error_pixels"]}; output={output}')
@@ -1266,6 +1315,8 @@ def main():
     parser.add_argument('--full-dog-bucket', type=Path, help='Draw entire color pixel map with closed contours and bucket fills')
     parser.add_argument('--pixel-perfect-finish', action='store_true', help='Experimental pixel print correction after drawing')
     parser.add_argument('--pixel-finish-limit', type=int, default=1500, help='Maximum finishing strokes')
+    parser.add_argument('--black-gap-finish', action='store_true', help='Repair white gaps only where the source is black')
+    parser.add_argument('--black-gap-limit', type=int, default=120, help='Maximum black gap repair strokes')
     parser.add_argument('--continuous-paths', type=Path, help='Continuous-path analysis JSON')
     parser.add_argument('--continuous-path-test', type=int, choices=(1, 20), help='Draw 1 or 20 paths in Paint')
     parser.add_argument('--paint-plan-gap-test', action='store_true', help='Draw only two separated orange strokes to diagnose unwanted connector lines')
@@ -1303,7 +1354,11 @@ def main():
             parser.error('Invalid drawing speed')
         if args.pixel_finish_limit < 1:
             parser.error('--pixel-finish-limit must be positive')
-        draw_full_dog_bucket(args.full_dog_bucket,float(speed),args.pixel_perfect_finish,args.pixel_finish_limit)
+        if args.black_gap_limit < 1:
+            parser.error('--black-gap-limit must be positive')
+        if args.pixel_perfect_finish and args.black_gap_finish:
+            parser.error('Choose only one finishing mode')
+        draw_full_dog_bucket(args.full_dog_bucket,float(speed),args.pixel_perfect_finish,args.pixel_finish_limit,args.black_gap_finish,args.black_gap_limit)
         return
     if args.neighbor_regions_test is not None:
         if args.region_bucket_test or args.ear_contour_test or args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
