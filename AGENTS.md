@@ -6,6 +6,10 @@ These rules apply to every change in this repository. Read this file before modi
 
 Draw a recognizable, complete, accurately colored dog in **Microsoft Paint by physically controlling the mouse and Paint tools**. The output is a human-like drawing process, not a bitmap transfer or a raster printer. Preserve the reference's outlines, shapes, colors, and small details. The final Paint canvas must have no unintended white gaps between adjacent colored or outlined cells.
 
+## Approved black-base workflow
+
+The user explicitly approved **Black Base + Color Layers** on 2026-11-21. After tracing and closing the exterior silhouette, use Paint Bucket to fill the enclosed dog silhouette black before drawing internal colored boundaries. Draw each nonblack region's closed contour in its intended color over the black base, then fill its interior with Bucket and verify the actual Paint screenshot. Keep black outlines/details where the source requires them; paint nested white highlights after black eyes when required. The black foundation replaces the previous white-interior starting state; it does **not** authorize pixel printing, bitmap paste, broad Pencil coverage, or skipping verification. An unfilled dark seam is still a fidelity defect that must be measured.
+
 ## Non-negotiable drawing workflow
 
 1. **Outer contours first.** Trace the dog's exterior silhouette with meaningful, continuous pencil/line paths: ears, head, body, legs, paws, and tail. Do not start with interior colors or scanline strokes.
