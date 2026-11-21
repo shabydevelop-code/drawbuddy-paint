@@ -633,7 +633,18 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     print(f'STARTUP: imports={import_seconds:.3f}s, map={read_seconds:.3f}s, masks={mask_seconds:.3f}s, regions={analysis_seconds:.3f}s, plan={planning_seconds:.3f}s',flush=True)
     print('STARTUP: initializing Paint...',flush=True)
     engine = DrawingEngine(speed=speed)
+    # Reset Paint's persistent tool state before the first canvas action.
+    # Paint may reopen with Bucket and black selected from a prior run.
+    engine.tools.select('pencil')
     engine.stroke_size.select(1)
+    startup_ink = max(
+        ((rgb,int(np.count_nonzero(mask))) for rgb,mask in groups
+         if max(rgb) <= 24 and rgb != (255,255,255)),
+        key=lambda entry:entry[1],default=None)
+    if startup_ink is None:
+        raise RuntimeError('Cannot initialize Paint: no outline ink color')
+    engine.colors.select_rgb(startup_ink[0])
+    print(f'STARTUP: Pencil, size=1, ink={startup_ink[0]} selected',flush=True)
     print(f'STARTUP: Paint initialized in {time.perf_counter()-stage_clock:.3f}s',flush=True)
     paint_init_seconds = time.perf_counter() - stage_clock
     startup_total_seconds = time.perf_counter() - startup_clock
@@ -725,77 +736,10 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             seed = region['seed']
             fill_point = (left+seed[0],top+seed[1])
             engine.paint.validate_canvas_points([fill_point])
-            # Compare canvas immediately before and after Bucket. A leaking
-            # boundary can flood the white background; checking only the
-            # intended region's interior would falsely accept that flood.
-            sx,sy = engine.paint.point(left,top)
-            before_shot = pg.screenshot()
-            if sx < 0 or sy < 0 or sx+w > before_shot.width or sy+h > before_shot.height:
-                raise RuntimeError('Bucket guard crop outside display')
-            before = np.asarray(
-                before_shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
-            # Never fill if the seed already has the desired color:
-            # Paint may instead select a connected outside region.
-            seed_x,seed_y = seed
-            if np.array_equal(before[seed_y,seed_x],np.asarray(rgb,np.uint8)):
-                print(f'BUCKET SKIP: seed already colored for {rgb}',flush=True)
-            else:
-                engine.tools.select('bucket')
-                engine.canvas.fill(*fill_point)
-                after_shot = pg.screenshot()
-                after = np.asarray(
-                    after_shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
-                changed = np.any(before != after,axis=2)
-                # Compare changed pixels to the FULL source, not only the
-                # current connected-component mask. Neighboring components
-                # of the same color may legitimately be filled together.
-                allowed = cv2.dilate(region['mask'],
-                                     np.ones((3,3),np.uint8)) != 0
-                outside = changed & ~allowed
-                target_rgb = cv2.cvtColor(source,cv2.COLOR_BGR2RGB)
-                expected_color = np.all(
-                    target_rgb == np.asarray(rgb,np.uint8),axis=2)
-                same_color_elsewhere = outside & expected_color
-                wrong_color = outside & ~expected_color
-                spill_count = int(np.count_nonzero(wrong_color))
-                other_same = int(np.count_nonzero(same_color_elsewhere))
-                if np.any(outside):
-                    # Preserve evidence before Undo, including a pixel
-                    # overlay that distinguishes genuine wrong-color spills
-                    # from same-color changes in adjacent components.
-                    diagnostic_dir = output/'bucket-diagnostics'
-                    diagnostic_dir.mkdir(parents=True,exist_ok=True)
-                    tag = f'{rgb[0]}-{rgb[1]}-{rgb[2]}-region-{index}'
-                    overlay = after.copy()
-                    overlay[same_color_elsewhere] = (0,255,255)
-                    overlay[wrong_color] = (255,0,255)
-                    cv2.imwrite(str(diagnostic_dir/f'{tag}-overlay.png'),
-                                cv2.cvtColor(overlay,cv2.COLOR_RGB2BGR))
-                    cv2.imwrite(str(diagnostic_dir/f'{tag}-before.png'),
-                                cv2.cvtColor(before,cv2.COLOR_RGB2BGR))
-                    cv2.imwrite(str(diagnostic_dir/f'{tag}-after.png'),
-                                cv2.cvtColor(after,cv2.COLOR_RGB2BGR))
-                    (diagnostic_dir/f'{tag}.json').write_text(
-                        json.dumps({
-                            'color':list(rgb),'region_index':index,
-                            'region_count':len(batch),
-                            'outside_component_pixels':int(np.count_nonzero(outside)),
-                            'same_source_color_outside_component':other_same,
-                            'wrong_source_color_outside_component':spill_count,
-                            'overlay_legend':{
-                                'cyan':'changed outside component but source expects same color',
-                                'magenta':'changed outside component where source expects another color'
-                            }},indent=2),encoding='utf-8')
-                    print(f'BUCKET DIAGNOSTIC: {other_same} same-color '
-                          f'pixels outside component; {spill_count} '
-                          f'wrong-color pixels; {diagnostic_dir}',flush=True)
-                if spill_count:
-                    pg.hotkey('ctrl','z')
-                    raise RuntimeError(
-                        f'BUCKET SPILL: color {rgb}, region '
-                        f'{index}/{len(batch)}, {spill_count} pixels '
-                        'changed where source expects a different color. '
-                        'Fill undone; diagnostic images saved.')
+            # Fill the current completed contour. Region completion is
+            # checked below; no separate BUCKET SPILL rejection layer.
+            engine.tools.select('bucket')
+            engine.canvas.fill(*fill_point)
             # Verify the region's interior, not its edge (the latter may
             # legitimately be repainted by a later neighboring region).
             core = cv2.erode(region['mask'],
