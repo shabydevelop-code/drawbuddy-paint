@@ -591,26 +591,13 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         json.dumps(boundary_diagnostics,indent=2),encoding='utf-8')
     print('BOUNDARY DIAGNOSTICS: output/comparison/full-dog-bucket/'
           'boundary-diagnostics.json',flush=True)
-    regions = safe_regions
-    print(f'BUCKET PREFLIGHT: {len(safe_regions)} safe regions, '
-          f'{len(unsafe_regions)} rejected for crossing source colors',flush=True)
-    # Unsafe bucket regions are rendered with exact source-color row runs.
-    # Never let a contour cross another color; preflight the mouse budget.
+    # Holes are not missing pixels: RETR_EXTERNAL deliberately surrounds
+    # inner islands. Paint outer areas first, then repaint their inner islands.
+    # This is a layered bucket plan, not thousands of pixel-by-pixel strokes.
+    print(f'BUCKET PREFLIGHT: {len(safe_regions)} simple regions, '
+          f'{len(unsafe_regions)} regions with interior islands',flush=True)
     fallback_jobs = []
-    for region,extra in unsafe_regions:
-        mask = region['mask']
-        for y in range(h):
-            xs = np.flatnonzero(mask[y])
-            if len(xs):
-                for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1):
-                    fallback_jobs.append((region['rgb'],y,int(run[0]),int(run[-1])))
     fallback_limit = 1500
-    print(f'BUCKET FALLBACK PREFLIGHT: {len(fallback_jobs)} exact-color strokes '
-          f'for {len(unsafe_regions)} unsafe regions (limit {fallback_limit})',flush=True)
-    if len(fallback_jobs) > fallback_limit:
-        raise RuntimeError(
-            f'Unsafe region fallback requires {len(fallback_jobs)} strokes, '
-            f'exceeding safety limit {fallback_limit}. No Paint actions started.')
     def tier(area):
         if area >= 1000: return 0
         if area >= 100: return 1
@@ -618,7 +605,9 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     analysis_seconds = time.perf_counter() - stage_clock
     stage_clock = time.perf_counter()
     # Coarse-to-fine, group by RGB inside each tier to reduce UI dialogs.
-    regions.sort(key=lambda x:(x['rgb'] == (0,0,0),tier(x['area']),x['rgb'],-x['area']))
+    # Large outer silhouettes first, small interior color islands last.
+    # This avoids a large bucket erasing smaller regions drawn earlier.
+    regions.sort(key=lambda x:-x['area'])
     # Only true black source pixels become black marks; never trace both sides of a thin black component.
     details.sort(key=lambda x:(x['rgb'] == (0,0,0),x['rgb'],-x['area']))
     left,top = 250+(500-w)//2,155+(547-h)//2
@@ -684,6 +673,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         completed += 1
         if completed % 50 == 0:
             print(f'  Fills: {completed}/{len(regions)}, color switches={color_switches}')
+    # No row-run fallback: nested areas are handled by layer ordering.
     # Exact-color fallback for the rejected regions, after safe bucket fills.
     fallback_completed = 0
     for rgb,y,x0,x1 in fallback_jobs:
