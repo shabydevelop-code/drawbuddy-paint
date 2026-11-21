@@ -510,8 +510,26 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     # exactly one pencil path. No double contours, no bucket, no clipboard.
     # Merge identical horizontal runs on consecutive rows into a single
     # serpentine mouse stroke, keeping every segment within source color.
+    # Three explicit stages: silhouette ink, internal ink, then color.
+    # Every pixel belongs to exactly one stage, preventing duplicate edges.
+    ink_groups = [(rgb,mask) for rgb,mask in groups
+                  if max(rgb) <= 24]
+    color_groups = [(rgb,mask) for rgb,mask in groups
+                    if max(rgb) > 24]
+    ink_mask = np.zeros((h,w),np.uint8)
+    for _,mask in ink_groups:
+        ink_mask = cv2.bitwise_or(ink_mask,mask)
+    white = np.uint8(np.all(source == 255,axis=2))*255
+    adjacent_white = cv2.dilate(white,np.ones((3,3),np.uint8))
+    outer_ink = cv2.bitwise_and(ink_mask,adjacent_white)
+    stages = []
+    for rgb,mask in ink_groups:
+        stages.append((0,rgb,cv2.bitwise_and(mask,outer_ink)))
+        stages.append((1,rgb,cv2.bitwise_and(mask,cv2.bitwise_not(outer_ink))))
+    for rgb,mask in color_groups:
+        stages.append((2,rgb,mask))
     jobs = []
-    for rgb,mask in groups:
+    for stage,rgb,mask in stages:
         active = {}
         for y in range(h):
             xs = np.flatnonzero(mask[y])
@@ -522,7 +540,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             current = set(runs)
             for key in list(active):
                 if key not in current:
-                    jobs.append((rgb,active.pop(key)))
+                    jobs.append((stage,rgb,active.pop(key)))
             for x0,x1 in runs:
                 key = (x0,x1)
                 if key not in active:
@@ -530,17 +548,19 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                 else:
                     path = active[key]
                     if len(path) >= 300:
-                        jobs.append((rgb,path))
+                        jobs.append((stage,rgb,path))
                         active[key] = [(x0,y),(x1,y)]
                     elif path[-1][0] == x1:
                         path.extend([(x1,y),(x0,y)])
                     else:
                         path.extend([(x0,y),(x1,y)])
         for path in active.values():
-            jobs.append((rgb,path))
+            jobs.append((stage,rgb,path))
+    jobs.sort(key=lambda job:(job[0],job[1]))
+    print('DRAW ORDER: outer ink -> inner ink -> color pixels',flush=True)
     # Simulate all pencil segments at source resolution before Paint opens.
     planned = np.full((h,w,3),255,np.uint8)
-    for rgb,path in jobs:
+    for stage,rgb,path in jobs:
         color = rgb[::-1]
         for p0,p1 in zip(path,path[1:]):
             cv2.line(planned,p0,p1,color,1,cv2.LINE_8)
@@ -565,7 +585,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     engine.stroke_size.select(1)
     left,top = 250+(500-w)//2,155+(547-h)//2
     last_rgb = None
-    for index,(rgb,path) in enumerate(sorted(jobs,key=lambda j:j[0]),1):
+    for index,(stage,rgb,path) in enumerate(jobs,1):
         check_cancel()
         if rgb != last_rgb:
             engine.colors.select_rgb(rgb)
@@ -582,6 +602,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                                   w,h,left,top,output=output,tolerance=0)
     report['test'] = 'exact shared-cell pencil coverage without contours or bucket'
     report['planned_strokes'] = len(jobs)
+    report['drawing_order'] = 'outer ink, inner ink, color'
     report['planned_wrong_pixels'] = mismatched
     (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(f'SHARED-CELL RESULT: {report["error_pixels"]} pixel errors',flush=True)
