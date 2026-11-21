@@ -746,21 +746,56 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                 after = np.asarray(
                     after_shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
                 changed = np.any(before != after,axis=2)
-                # Boundary pixels can be modified by anti-aliasing/contour
-                # overlap, but a bucket must not alter unrelated pixels.
+                # Compare changed pixels to the FULL source, not only the
+                # current connected-component mask. Neighboring components
+                # of the same color may legitimately be filled together.
                 allowed = cv2.dilate(region['mask'],
                                      np.ones((3,3),np.uint8)) != 0
-                spill = changed & ~allowed
-                spill_count = int(np.count_nonzero(spill))
+                outside = changed & ~allowed
+                target_rgb = cv2.cvtColor(source,cv2.COLOR_BGR2RGB)
+                expected_color = np.all(
+                    target_rgb == np.asarray(rgb,np.uint8),axis=2)
+                same_color_elsewhere = outside & expected_color
+                wrong_color = outside & ~expected_color
+                spill_count = int(np.count_nonzero(wrong_color))
+                other_same = int(np.count_nonzero(same_color_elsewhere))
+                if np.any(outside):
+                    # Preserve evidence before Undo, including a pixel
+                    # overlay that distinguishes genuine wrong-color spills
+                    # from same-color changes in adjacent components.
+                    diagnostic_dir = output/'bucket-diagnostics'
+                    diagnostic_dir.mkdir(parents=True,exist_ok=True)
+                    tag = f'{rgb[0]}-{rgb[1]}-{rgb[2]}-region-{index}'
+                    overlay = after.copy()
+                    overlay[same_color_elsewhere] = (0,255,255)
+                    overlay[wrong_color] = (255,0,255)
+                    cv2.imwrite(str(diagnostic_dir/f'{tag}-overlay.png'),
+                                cv2.cvtColor(overlay,cv2.COLOR_RGB2BGR))
+                    cv2.imwrite(str(diagnostic_dir/f'{tag}-before.png'),
+                                cv2.cvtColor(before,cv2.COLOR_RGB2BGR))
+                    cv2.imwrite(str(diagnostic_dir/f'{tag}-after.png'),
+                                cv2.cvtColor(after,cv2.COLOR_RGB2BGR))
+                    (diagnostic_dir/f'{tag}.json').write_text(
+                        json.dumps({
+                            'color':list(rgb),'region_index':index,
+                            'region_count':len(batch),
+                            'outside_component_pixels':int(np.count_nonzero(outside)),
+                            'same_source_color_outside_component':other_same,
+                            'wrong_source_color_outside_component':spill_count,
+                            'overlay_legend':{
+                                'cyan':'changed outside component but source expects same color',
+                                'magenta':'changed outside component where source expects another color'
+                            }},indent=2),encoding='utf-8')
+                    print(f'BUCKET DIAGNOSTIC: {other_same} same-color '
+                          f'pixels outside component; {spill_count} '
+                          f'wrong-color pixels; {diagnostic_dir}',flush=True)
                 if spill_count:
-                    # Undo the unsafe bucket immediately; never proceed
-                    # to the next region with a flooded canvas.
                     pg.hotkey('ctrl','z')
                     raise RuntimeError(
                         f'BUCKET SPILL: color {rgb}, region '
                         f'{index}/{len(batch)}, {spill_count} pixels '
-                        'changed outside intended region. Fill undone; '
-                        'stopped before next region.')
+                        'changed where source expects a different color. '
+                        'Fill undone; diagnostic images saved.')
             # Verify the region's interior, not its edge (the latter may
             # legitimately be repainted by a later neighboring region).
             core = cv2.erode(region['mask'],
