@@ -4,15 +4,15 @@ DrawBuddy draws an exact-color source image in Microsoft Paint using mouse-drive
 
 ## Requirements
 
-Windows, Microsoft Paint, Python, and Python packages `pyautogui`, `opencv-python`, `numpy`. Open a blank white maximized Paint canvas.
+Windows, Microsoft Paint, Python, and Python packages `pyautogui`, `opencv-python`, `numpy`, `Pillow`. Open a blank white maximized Paint canvas.
 
 ## Draw any source image
 
 ```powershell
-python -u main.py --source-image assets/house-reference.png --speed 50
+python -u main.py --source-image assets/house-reference.png --speed 50 --colors 50
 ```
 
-Use any supported image path with `--source-image`. The drawing area is limited to **550 pixels wide × 500 pixels high**. Larger source images are automatically scaled down proportionally to fit both bounds, without cropping or upscaling smaller images. Scaling uses OpenCV INTER_AREA; it may introduce blended RGB colors and lose source-resolution detail. Images already within the bounds retain their original pixel values. There is no 16-color palette limit; more distinct colors may greatly increase planning and drawing time. Screenshot comparison checks the actual Paint result against the **scaled drawing target**, not the original high-resolution image.
+Use any supported image path with `--source-image`. The drawing area is limited to **550 pixels wide × 500 pixels high**. Larger source images are automatically scaled down proportionally to fit both bounds, without cropping or upscaling smaller images. Scaling uses OpenCV INTER_AREA; it may introduce blended RGB colors and lose source-resolution detail. After scaling, the image is quantized using Median Cut to at most **50 RGB colors by default**, configurable with `--colors N` (2–256). Pure black and white pixels are preserved when present and count toward the limit. Quantization changes some RGB values and may lose fine color details; the original file is not modified. More colors may greatly increase planning and drawing time. Screenshot comparison checks the actual Paint result against the **scaled, quantized drawing target**, not the original image.
 
 ## Optional logs
 
@@ -33,7 +33,7 @@ Each run with `--logs` writes its generated plan, comparison images, reports, an
 - `output/`: locally generated optional diagnostics, excluded from Git.
 - `AGENTS.md`: drawing method and fidelity requirements.
 
-The public drawing interface consists only of `--source-image`, `--speed`, and `--logs`. Internal stroke-plan processing is not a separate CLI mode.
+The public drawing interface consists only of `--source-image`, `--speed`, `--colors`, and `--logs`. Internal stroke-plan processing is not a separate CLI mode.
 
 ## Updating from GitHub
 
