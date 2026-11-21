@@ -459,6 +459,93 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
 
 
 
+
+def draw_region_bucket_test(plan_path, speed):
+    """Draw one genuine closed color-region outline, then bucket-fill it in Paint."""
+    import cv2
+    import numpy as np
+    import time
+    from drawbuddy.controller import check_cancel
+    data = json.loads(Path(plan_path).read_text(encoding='utf-8'))
+    w, h = data.get('width'), data.get('height')
+    if (data.get('format') != 'drawbuddy-paint-stroke-plan-v1'
+            or not isinstance(w, int) or not isinstance(h, int)
+            or not 1 <= w <= 500 or not 1 <= h <= 547):
+        raise ValueError('Invalid original 16-color pixel plan')
+    candidates = []
+    for group in data['groups']:
+        if group['background']:
+            continue
+        rgb = tuple(bytes.fromhex(group['rgb'][1:]))
+        if len(rgb) != 3 or min(rgb) < 0:
+            raise ValueError('Invalid region RGB')
+        mask = np.zeros((h, w), np.uint8)
+        for x0, y0, x1, y1 in group['strokes']:
+            if not 0 <= x0 <= x1 < w or not 0 <= y0 == y1 < h:
+                raise ValueError('Invalid source run')
+            mask[y0, x0:x1+1] = 255
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        for idx in range(1, count):
+            x, y, bw, bh, area = map(int, stats[idx])
+            if not (300 <= area <= 9000 and bw >= 20 and bh >= 20
+                    and x >= 3 and y >= 3 and x+bw < w-3 and y+bh < h-3):
+                continue
+            component = np.uint8(labels == idx) * 255
+            contours, hierarchy = cv2.findContours(component, cv2.RETR_CCOMP,
+                                                      cv2.CHAIN_APPROX_NONE)
+            if hierarchy is None or len(contours) != 1:
+                continue  # Reject holes: one outer boundary only.
+            contour = contours[0]
+            if cv2.contourArea(contour) < 250:
+                continue
+            dist = cv2.distanceTransform(component, cv2.DIST_L2, 5)
+            _, radius, _, seed = cv2.minMaxLoc(dist)
+            if radius < 5:
+                continue
+            candidates.append((area, rgb, contour, seed, component))
+    if not candidates:
+        raise ValueError('No isolated hole-free color region suitable for bucket test')
+    # Choose a medium-size, genuine color region; never a clipped crop.
+    area, rgb, contour, seed, component = min(candidates,
+        key=lambda c: (abs(c[0]-1600), c[0]))
+    # Pixel-exact boundary; close by repeating the start. No row scanning.
+    points = [tuple(map(int, p[0])) for p in contour]
+    points.append(points[0])
+    left, top = 250+(500-w)//2, 155+(547-h)//2
+    mapped = [(left+x, top+y) for x,y in points]
+    seed_xy = (left+seed[0], top+seed[1])
+    output = Path('output/comparison/region-bucket-test')
+    output.mkdir(parents=True, exist_ok=True)
+    expected = np.full((h, w, 3), 255, np.uint8)
+    cv2.fillPoly(expected, [contour], rgb[::-1], lineType=cv2.LINE_8)
+    cv2.imwrite(str(output/'expected.png'), expected)
+    print(f'REGION BUCKET TEST: color={rgb}, area={area}, '
+          f'boundary_points={len(points)}, seed={seed}')
+    print('Open a NEW blank white maximized Paint canvas. F8 cancels.')
+    engine = DrawingEngine(speed=speed)
+    engine.paint.validate_canvas_points(mapped + [seed_xy])
+    engine.tools.select('pencil')
+    engine.stroke_size.select(1)
+    engine.colors.select_rgb(rgb)
+    start = time.perf_counter()
+    engine.paint.stroke(mapped, duration=0.012)
+    # Capture the boundary stage separately so a leak can be diagnosed.
+    engine.paint.refresh_display()
+    engine.paint.screenshot(str(output/'outline-screen.png'))
+    check_cancel()
+    engine.tools.select('bucket')
+    engine.canvas.fill(*seed_xy)
+    engine.paint.refresh_display()
+    report = compare_paint_canvas(engine.paint, output/'expected.png',
+                                  w, h, left, top, output=output, tolerance=0)
+    report['test'] = 'one closed contour then Paint bucket fill'
+    report['source_component_pixels'] = area
+    report['elapsed_seconds'] = round(time.perf_counter()-start, 3)
+    (output/'report.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+    print(f'REGION BUCKET TEST: exact match={report["exact_pixel_match_percent"]}%, '
+          f'errors={report["error_pixels"]}; output={output}')
+
+
 def draw_ear_contour_test(plan_path, speed):
     """One actual shape-following Paint gesture, extracted from upper dog silhouette."""
     import cv2
@@ -747,6 +834,7 @@ def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
     parser.add_argument('--paint-plan', type=Path, help='Validate or draw a 16-color pixel stroke plan')
     parser.add_argument('--ear-contour-test', type=Path, help='Draw one real upper-head outline gesture from the pixel plan')
+    parser.add_argument('--region-bucket-test', type=Path, help='Outline one real closed color region and fill it with Paint bucket')
     parser.add_argument('--continuous-paths', type=Path, help='Continuous-path analysis JSON')
     parser.add_argument('--continuous-path-test', type=int, choices=(1, 20), help='Draw 1 or 20 paths in Paint')
     parser.add_argument('--paint-plan-gap-test', action='store_true', help='Draw only two separated orange strokes to diagnose unwanted connector lines')
@@ -776,6 +864,14 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
+    if args.region_bucket_test is not None:
+        if args.ear_contour_test or args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
+            parser.error('--region-bucket-test must be used alone')
+        speed = args.speed if args.speed is not None else 20
+        if not isinstance(speed, (int, float)) or not math.isfinite(speed) or not 0 < speed <= 100:
+            parser.error('Invalid drawing speed')
+        draw_region_bucket_test(args.region_bucket_test, float(speed))
+        return
     if args.ear_contour_test is not None:
         if args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
             parser.error('--ear-contour-test must be used alone')
