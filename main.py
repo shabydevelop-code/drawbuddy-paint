@@ -477,22 +477,44 @@ def draw_ear_contour_test(plan_path, speed):
             if not 0 <= x0 <= x1 < w or not 0 <= y0 == y1 < h:
                 raise ValueError('Invalid source run')
             mask[y0, x0:x1+1] = 255
-    # Upper-left head region: choose a substantial outer silhouette, never a row scan.
-    upper = mask[:max(2, h//2), :max(2, w//2)].copy()
-    contours, _ = cv2.findContours(upper, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    candidates = [c for c in contours if cv2.contourArea(c) >= 100 and
-                  cv2.boundingRect(c)[2] >= 15 and cv2.boundingRect(c)[3] >= 15]
-    if not candidates:
-        raise ValueError('No substantial upper-left contour in the pixel map')
-    contour = max(candidates, key=cv2.contourArea)
-    # Keep a short portion of the outer boundary to isolate the first natural gesture.
-    epsilon = 1.2
-    simplified = cv2.approxPolyDP(contour, epsilon, True).reshape(-1, 2)
-    if len(simplified) < 5:
-        simplified = cv2.approxPolyDP(contour, 0.5, True).reshape(-1, 2)
+    # Trace the complete image first. Never crop before contour extraction:
+    # crop edges were mistakenly drawn as vertical anatomy in the previous test.
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    contours = [c.reshape(-1, 2) for c in contours if cv2.contourArea(c) >= 100]
+    if not contours:
+        raise ValueError('No substantial silhouette in the pixel map')
+    # Candidate arcs are contiguous pieces of REAL silhouette in the upper-left
+    # head/ear area. The bounds only select an arc; they do not create edges.
+    arcs = []
+    for contour in contours:
+        n = len(contour)
+        eligible = [int(x) < int(w * 0.64) and int(y) < int(h * 0.34)
+                    for x, y in contour]
+        if all(eligible):
+            arcs.append(contour)
+            continue
+        if not any(eligible):
+            continue
+        # Rotate to an ineligible point, then collect uninterrupted eligible runs.
+        offset = next(i for i, ok in enumerate(eligible) if not ok)
+        run = []
+        for k in range(1, n + 1):
+            idx = (offset + k) % n
+            if eligible[idx]:
+                run.append(contour[idx])
+            elif run:
+                arcs.append(np.asarray(run, dtype=np.int32))
+                run = []
+    arcs = [arc for arc in arcs if len(arc) >= 12 and
+            np.ptp(arc[:, 0]) >= 12 and np.ptp(arc[:, 1]) >= 10]
+    if not arcs:
+        raise ValueError('No substantial real silhouette arc in upper-left head area')
+    # Select the longest actual boundary arc, not a closed crop contour.
+    arc = max(arcs, key=lambda c: len(c))
+    simplified = cv2.approxPolyDP(arc.reshape(-1, 1, 2), 0.75, False).reshape(-1, 2)
     points = [tuple(map(int, p)) for p in simplified]
-    # Follow the outer boundary once; no horizontal filling and no internal raster passes.
-    points.append(points[0])
+    if len(points) < 2:
+        raise ValueError('Selected outline arc is too short')
     left, top = 250+(500-w)//2, 155+(547-h)//2
     mapped = [(left+x, top+y) for x,y in points]
     output = Path('output/comparison/ear-contour-test')
@@ -500,7 +522,7 @@ def draw_ear_contour_test(plan_path, speed):
     preview = np.full((h,w,3), 255, dtype=np.uint8)
     cv2.polylines(preview, [np.asarray(points, np.int32)], False, (0, 0, 0), 1, cv2.LINE_8)
     cv2.imwrite(str(output/'expected.png'), preview)
-    print(f'EAR CONTOUR TEST: {len(points)} points; one closed, shape-following gesture')
+    print(f'UPPER SILHOUETTE TEST: {len(points)} points; one open, shape-following gesture (no crop edges)')
     print('Open a NEW blank white maximized Paint canvas. F8 cancels.')
     engine = DrawingEngine(speed=speed)
     engine.paint.validate_canvas_points(mapped)
