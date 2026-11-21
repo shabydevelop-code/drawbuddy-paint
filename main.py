@@ -536,7 +536,7 @@ def draw_full_dog_bucket(plan_path, speed):
             if is_black and (radius < 2.5 or area < 30):
                 # Thin black marks are details, not bucket-fill surfaces.
                 if area >= 2:
-                    details.append({'rgb':rgb,'area':area,'contour':contour})
+                    narrow_regions.append({'rgb':rgb,'area':area,'mask':component})
                 continue
             if area < 8:
                 omitted_pixels += area
@@ -559,8 +559,8 @@ def draw_full_dog_bucket(plan_path, speed):
     analysis_seconds = time.perf_counter() - stage_clock
     stage_clock = time.perf_counter()
     # Coarse-to-fine, group by RGB inside each tier to reduce UI dialogs.
-    regions.sort(key=lambda x:(tier(x['area']),x['rgb'],-x['area']))
-    # Nonblack thin marks first, black details last, irrespective of size.
+    regions.sort(key=lambda x:(x['rgb'] == (0,0,0),tier(x['area']),x['rgb'],-x['area']))
+    # Only true black source pixels become black marks; never trace both sides of a thin black component.
     details.sort(key=lambda x:(x['rgb'] == (0,0,0),x['rgb'],-x['area']))
     left,top = 250+(500-w)//2,155+(547-h)//2
     output = Path('output/comparison/full-dog-bucket')
@@ -625,6 +625,8 @@ def draw_full_dog_bucket(plan_path, speed):
         completed += 1
         if completed % 50 == 0:
             print(f'  Fills: {completed}/{len(regions)}, color switches={color_switches}')
+    # All bucket-filled regions have been processed. Narrow ink is drawn
+    # directly from source pixels, never from doubled component contours.
     # Narrow components: pencil-only, no bucket and no repeated boundary tracing.
     # Draw color islands before the final black linework.
     narrow_strokes = 0
@@ -677,12 +679,13 @@ def draw_full_dog_bucket(plan_path, speed):
             print(f'  Details: {i}/{len(details)}')
     report = compare_paint_canvas(engine.paint,output/'expected.png',
                                   w,h,left,top,output=output,tolerance=0)
-    report['test'] = 'full dog: restored bucket-filled black surfaces and thin black contour details'
+    report['test'] = 'full dog: color boundaries separate from black source-pixel ink'
     report['region_count'] = len(regions)
     report['completed_regions'] = completed
     report['thick_outline_regions'] = thick_outline_regions
     report['thick_outline_size_preset'] = 1
     report['black_centerline_components'] = 0
+    report['black_ink_method'] = 'direct narrow mask pencil runs; broad black components bucket-filled last'
     report['thick_outline_min_area'] = None
     report['thin_regions'] = len(details)
     report['narrow_pencil_regions'] = len(narrow_regions)
