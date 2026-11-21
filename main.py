@@ -792,6 +792,54 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                 mismatch = core & np.any(actual != expected,axis=2)
                 wrong = int(np.count_nonzero(mismatch))
                 if wrong:
+                    # A single Bucket click cannot fill disconnected pockets
+                    # left by contour strokes. Inspect the REAL Paint pixels,
+                    # then bucket each safely enclosed unpainted pocket.
+                    # Do not replace a missed region with Pencil raster work.
+                    pocket_mask = np.uint8(mismatch)
+                    count,labels,stats,_ = cv2.connectedComponentsWithStats(
+                        pocket_mask,connectivity=4)
+                    for pocket_id in range(1,count):
+                        pocket = np.uint8(labels == pocket_id)*255
+                        if int(stats[pocket_id,cv2.CC_STAT_AREA]) < 3:
+                            continue
+                        # Only bucket a genuinely blank connected pocket.
+                        # Require an interior seed and a closed colored
+                        # boundary in the actual screenshot (4-neighborhood).
+                        distance = cv2.distanceTransform(
+                            pocket,cv2.DIST_L2,3)
+                        _,_,_,local_seed = cv2.minMaxLoc(distance)
+                        px,py = local_seed
+                        if not np.all(actual[py,px] >= 248):
+                            continue
+                        blank = np.uint8(np.all(actual >= 248,axis=2))
+                        flood = blank.copy()
+                        flood_mask = np.zeros((h+2,w+2),np.uint8)
+                        cv2.floodFill(flood,flood_mask,(px,py),2,
+                                     flags=4 | cv2.FLOODFILL_FIXED_RANGE)
+                        connected = flood == 2
+                        if (np.any(connected[0,:]) or
+                            np.any(connected[-1,:]) or
+                            np.any(connected[:,0]) or
+                            np.any(connected[:,-1]) or
+                            np.any(connected & ~region['mask'].astype(bool))):
+                            print(f'  BUCKET POCKET UNSAFE: {rgb} '
+                                  f'area={int(stats[pocket_id,cv2.CC_STAT_AREA])}',
+                                  flush=True)
+                            continue
+                        point = (left+px,top+py)
+                        engine.paint.validate_canvas_points([point])
+                        engine.tools.select('bucket')
+                        engine.canvas.fill(*point)
+                        print(f'  BUCKET POCKET: color={rgb} '
+                              f'pixels={int(np.count_nonzero(connected))}',
+                              flush=True)
+                        screenshot = pg.screenshot()
+                        actual = np.asarray(
+                            screenshot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+                    mismatch = core & np.any(actual != expected,axis=2)
+                    wrong = int(np.count_nonzero(mismatch))
+                if wrong:
                     # Only repair a genuinely tiny, verified interior defect.
                     # Larger failures indicate an incorrect boundary or fill;
                     # do not disguise them with raster drawing.
