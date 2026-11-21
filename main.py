@@ -800,7 +800,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
 
 def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
                       black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None):
-    ""Convert an exact-RGB image to the generic contour/Bucket engine."""
+    """Convert an exact-RGB image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
     import time
