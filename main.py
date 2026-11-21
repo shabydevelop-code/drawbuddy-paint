@@ -793,6 +793,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             for path in region['paths']:
                 mapped = [(left+x,top+y) for x,y in path]
                 engine.paint.validate_canvas_points(mapped)
+                log_final_pencil('white_eye_highlight',(255,255,255),mapped)
                 engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
                                     duration=0.012)
             seed = region['seed']
@@ -853,6 +854,23 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     print('DRAW STAGE 3/3: FINAL DETAILS AND VERIFICATION',flush=True)
     # No row-run fallback: nested areas are handled by layer ordering.
     # Exact-color fallback for the rejected regions, after safe bucket fills.
+    # Record every late Pencil gesture and its source color so unexpected
+    # eye-edge marks can be traced to the exact operation without guessing.
+    final_pencil_log = []
+    def log_final_pencil(stage, rgb, points):
+        xs = [int(p[0]-left) for p in points]
+        ys = [int(p[1]-top) for p in points]
+        entry = {
+            'stage': stage,
+            'rgb': list(map(int,rgb)),
+            'points': len(points),
+            'bbox_local_xyxy': [min(xs),min(ys),max(xs),max(ys)],
+        }
+        final_pencil_log.append(entry)
+        print('FINAL PENCIL ACTION: ' +
+              json.dumps(entry,separators=(',',':')),flush=True)
+        (output/'final-pencil-actions.json').write_text(
+            json.dumps(final_pencil_log,indent=2),encoding='utf-8')
     fallback_completed = 0
     for rgb,y,x0,x1 in fallback_jobs:
         check_cancel()
@@ -864,6 +882,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         engine.stroke_size.select(1)
         mapped = [(left+x0,top+y),(left+x1,top+y)]
         engine.paint.validate_canvas_points(mapped)
+        log_final_pencil('fallback',rgb,mapped)
         if x0 == x1:
             engine.canvas.fill(*mapped[0])
         else:
@@ -957,6 +976,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             points.append(points[0])
         mapped = [(left+x,top+y) for x,y in points]
         engine.paint.validate_canvas_points(mapped)
+        log_final_pencil('detail',rgb,mapped)
         if len(mapped) == 1:
             engine.canvas.fill(*mapped[0])
         elif len(mapped) > 1:
