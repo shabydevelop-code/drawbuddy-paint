@@ -533,11 +533,19 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             dist = cv2.distanceTransform(component,cv2.DIST_L2,3)
             _,radius,_,seed = cv2.minMaxLoc(dist)
             is_black = rgb == (0,0,0)
-            if is_black and (radius < 2.5 or area < 30):
-                # Thin black marks are details, not bucket-fill surfaces.
-                if area >= 2:
-                    narrow_regions.append({'rgb':rgb,'area':area,'mask':component})
-                continue
+            if is_black:
+                # Geometry, not area alone: a long black ribbon is ink, not
+                # a closed bucket surface. Keep compact eyes/nose bucketed.
+                bw = int(stats[idx,cv2.CC_STAT_WIDTH])
+                bh = int(stats[idx,cv2.CC_STAT_HEIGHT])
+                elongation = max(bw,bh)/max(1,min(bw,bh))
+                ribbon = (radius < 2.5 or area < 30 or
+                          (elongation >= 2.5 and radius < 6.0))
+                if ribbon:
+                    if area >= 2:
+                        narrow_regions.append({'rgb':rgb,'area':area,
+                                               'mask':component,'ribbon':True})
+                    continue
             if area < 8:
                 omitted_pixels += area
                 continue
@@ -627,12 +635,12 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             print(f'  Fills: {completed}/{len(regions)}, color switches={color_switches}')
     # All bucket-filled regions have been processed. Narrow ink is drawn
     # directly from source pixels, never from doubled component contours.
-    # Bounded narrow-region pass: no thousands of single-pixel clicks.
-    # Favor meaningful connected strokes; skip isolated micro-pixels.
+    # Black ribbon centerlines are drawn after bucket fills, never bucketed.
+    # Bounded path extraction prevents contour-loop cursor excursions.
     narrow_strokes = 0
     narrow_skipped = 0
     narrow_budget = 120
-    for item in sorted(narrow_regions,key=lambda q:(q['rgb']==(0,0,0),q['rgb'],-q['area'])):
+    for item in sorted(narrow_regions,key=lambda q:(q['rgb']!=(0,0,0),-q['area'])):
         check_cancel()
         if narrow_strokes >= narrow_budget:
             narrow_skipped += 1
@@ -641,13 +649,54 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         if item['area'] < 8:
             narrow_skipped += 1
             continue
-        # One contour path per narrow connected component instead of a
-        # separate mouse action for every horizontal pixel run.
-        contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            continue
-        path = max(contours,key=lambda c:len(c)).reshape(-1,2)
-        if len(path) < 2 or len(path) > 240:
+        if item.get('ribbon'):
+            # Morphological skeleton, confined to this exact black component.
+            remaining = mask.copy()
+            skeleton = np.zeros_like(mask)
+            kernel = cv2.getStructuringElement(cv2.MORPH_CROSS,(3,3))
+            while cv2.countNonZero(remaining):
+                eroded = cv2.erode(remaining,kernel)
+                opened = cv2.dilate(eroded,kernel)
+                skeleton = cv2.bitwise_or(skeleton,cv2.subtract(remaining,opened))
+                remaining = eroded
+            ys,xs = np.where(skeleton != 0)
+            pixels = {(int(x),int(y)) for y,x in zip(ys,xs)}
+            if len(pixels) < 2 or len(pixels) > 600:
+                narrow_skipped += 1
+                continue
+            # Split at junctions; trace simple chains, no teleporting
+            # between disconnected points in one mouse gesture.
+            offsets = ((-1,-1),(0,-1),(1,-1),(-1,0),(1,0),(-1,1),(0,1),(1,1))
+            neighbors = {q:[(q[0]+dx,q[1]+dy) for dx,dy in offsets
+                             if (q[0]+dx,q[1]+dy) in pixels] for q in pixels}
+            visited_edges = set()
+            paths = []
+            for origin in sorted(pixels,key=lambda q:(len(neighbors[q])==2,q[1],q[0])):
+                for neighbor in neighbors[origin]:
+                    edge = tuple(sorted((origin,neighbor)))
+                    if edge in visited_edges:
+                        continue
+                    chain = [origin,neighbor]
+                    visited_edges.add(edge)
+                    prev,cur = origin,neighbor
+                    while len(neighbors[cur]) == 2 and len(chain) < 240:
+                        nxt = next((q for q in neighbors[cur] if q != prev),None)
+                        if nxt is None:
+                            break
+                        edge = tuple(sorted((cur,nxt)))
+                        if edge in visited_edges:
+                            break
+                        visited_edges.add(edge)
+                        chain.append(nxt)
+                        prev,cur = cur,nxt
+                    if len(chain) >= 3:
+                        paths.append(chain)
+            paths.sort(key=len,reverse=True)
+            paths = [path for path in paths if len(path) >= 5][:4]
+        else:
+            contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            paths = [[(int(x),int(y)) for x,y in max(contours,key=lambda c:len(c)).reshape(-1,2)]] if contours else []
+        if not paths:
             narrow_skipped += 1
             continue
         rgb = item['rgb']
@@ -657,12 +706,13 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             color_switches += 1
         engine.tools.select('pencil')
         engine.stroke_size.select(1)
-        mapped = [(left+int(x),top+int(y)) for x,y in path]
-        engine.paint.validate_canvas_points(mapped)
-        engine.paint.stroke(mapped,duration=0.008)
-        narrow_strokes += 1
-    print(f'NARROW DETAIL LIMIT: {narrow_strokes}/{narrow_budget} strokes; '
-          f'{narrow_skipped} regions skipped to avoid excessive mouse actions',flush=True)
+        for path in paths[:max(0,narrow_budget-narrow_strokes)]:
+            mapped = [(left+x,top+y) for x,y in path]
+            engine.paint.validate_canvas_points(mapped)
+            engine.paint.stroke(mapped,duration=0.008)
+            narrow_strokes += 1
+    print(f'CENTERLINE DETAIL: {narrow_strokes}/{narrow_budget} strokes; '
+          f'{narrow_skipped} regions skipped',flush=True)
     engine.stroke_size.select(1)
     # Fine details are never bucket-filled. Trace each contour once and
     # simplify mildly to avoid repeated jitter around individual pixels.
@@ -744,7 +794,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     report['thick_outline_regions'] = thick_outline_regions
     report['thick_outline_size_preset'] = 1
     report['black_centerline_components'] = 0
-    report['black_ink_method'] = 'direct narrow mask pencil runs; broad black components bucket-filled last'
+    report['black_ink_method'] = 'bounded morphological centerlines for black ribbons; compact black surfaces bucket-filled'
     report['thick_outline_min_area'] = None
     report['thin_regions'] = len(details)
     report['narrow_pencil_regions'] = len(narrow_regions)
