@@ -43,6 +43,15 @@ Draw a recognizable, complete, accurately colored dog in **Microsoft Paint by ph
 - Document durable operational commands and recurring errors in existing documentation as appropriate, not a running status log.
 - When reporting work, state what was changed, what was actually tested, and what remains unverified. Do not claim success without an actual Paint run and visual/result comparison.
 
+## Exact 1:1 fidelity to the source (mandatory)
+
+- **The reference image is the single source of truth.** The drawing must reproduce it **1:1**, not merely look similar or recognizable.
+- Preserve every original shape, outline, boundary, proportion, position, color, and detail. No artistic interpretation, simplification, smoothing, stylization, or approximations unless the user explicitly approves them.
+- Preserve source dimensions and pixel alignment in the intended Paint canvas; do not silently resize, crop, shift, or change the palette.
+- The target is **zero differing pixels** between the captured Paint result and the source at the agreed pixel coordinates, with no missing white/colored/black pixels or unexpected marks.
+- If Paint's actual drawing behavior prevents exact fidelity, report the measured differences and limitations; do not declare 1:1 success.
+- Contour-and-Bucket mouse drawing remains mandatory even when pixel-perfect reproduction is challenging. Exactness does not authorize switching to printer-style raster drawing or bitmap pasting.
+
 ## Acceptance criteria
 
 1. A visible Paint drawing starts with continuous **outer dog contours**, then internal contours.
