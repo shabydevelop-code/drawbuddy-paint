@@ -798,7 +798,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
           f'errors={report["error_pixels"]}' + (f'; output={output}' if logs else ''), flush=True)
 
 
-def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
+def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, finish_limit=1500,
                       black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None):
     """Convert an exact-RGB image to the generic contour/Bucket engine."""
     import cv2
@@ -823,7 +823,25 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
     resize_seconds = time.perf_counter() - stage_start
     stage_start = time.perf_counter()
     rgb = cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
+    original_black = np.all(rgb == (0, 0, 0), axis=2)
+    original_white = np.all(rgb == (255, 255, 255), axis=2)
+    reserved = int(original_black.any()) + int(original_white.any())
+    if reserved and colors_limit < reserved:
+        raise ValueError(f'--colors must be at least {reserved} to preserve existing black/white pixels')
+    from PIL import Image
+    palette_size = colors_limit - reserved
+    if palette_size == 0:
+        if np.any(~(original_black | original_white)):
+            raise ValueError('--colors is too small to represent nonblack/nonwhite pixels')
+    else:
+        quantized = Image.fromarray(rgb, 'RGB').quantize(
+            colors=palette_size, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+        rgb = np.asarray(quantized.convert('RGB')).copy()
+    rgb[original_black] = (0, 0, 0)
+    rgb[original_white] = (255, 255, 255)
     colors,counts = np.unique(rgb.reshape(-1,3),axis=0,return_counts=True)
+    print(f'COLOR QUANTIZATION: median cut, limit={colors_limit}, '
+          f'actual={len(colors)}, preserved black/white={reserved}', flush=True)
     color_seconds = time.perf_counter() - stage_start
     stage_start = time.perf_counter()
     groups = []
@@ -862,13 +880,14 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
         'serialize_plan_seconds': round(serialize_seconds, 3),
         'total_source_preparation_seconds': round(time.perf_counter() - timing_start, 3),
         'distinct_rgb_colors': len(colors),
+        'requested_color_limit': colors_limit,
         'color_groups': len(groups),
     }
     print('SOURCE PREPARATION TIMING:', json.dumps(source_timings), flush=True)
     if logs:
         (output/'source-preparation-timing.json').write_text(
             json.dumps(source_timings, indent=2), encoding='utf-8')
-    print(f'SOURCE IMAGE: {source_path}, {w}x{h}, {len(colors)} exact colors; '
+    print(f'SOURCE IMAGE: {source_path}, {w}x{h}, {len(colors)} quantized colors; '
           'using existing full contour/Bucket engine',flush=True)
     draw_image_bucket(plan_path if logs else plan,speed,pixel_finish,finish_limit,
                          black_gap_finish,black_gap_limit,logs=logs,output_dir=output_dir)
@@ -877,7 +896,9 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
 def main():
     parser = argparse.ArgumentParser(description='Draw a source image in Microsoft Paint using Pencil contours and Bucket fills.')
     parser.add_argument('--source-image', type=Path, required=True,
-                        help='Exact-RGB source image (no palette reduction)')
+                        help='Source image to fit within 550x500 and quantize')
+    parser.add_argument('--colors', type=int, default=50,
+                        help='Maximum palette colors after Median Cut (default: 50, range: 2..256)')
     parser.add_argument('--speed', type=float, default=20,
                         help='Drawing speed multiplier (0..100)')
     parser.add_argument('--logs', action='store_true',
@@ -885,12 +906,14 @@ def main():
     args = parser.parse_args()
     if not math.isfinite(args.speed) or not 0 < args.speed <= 100:
         parser.error('--speed must be greater than 0 and at most 100')
+    if not 2 <= args.colors <= 256:
+        parser.error('--colors must be between 2 and 256')
     output_dir = None
     if args.logs:
         output_dir = Path('output') / datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
         output_dir.mkdir(parents=True, exist_ok=False)
         print(f'LOG DIRECTORY: {output_dir}', flush=True)
-    draw_source_image(args.source_image, args.speed, logs=args.logs,
+    draw_source_image(args.source_image, args.speed, colors_limit=args.colors, logs=args.logs,
                       output_dir=output_dir)
 
 
