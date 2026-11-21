@@ -469,12 +469,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
             np.uint8(expected_dark)*255,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
         # Contours can share boundary pixels. A pixel is scheduled at most
         # once; after each contour we refresh the real Paint screenshot.
-        # A one-pixel Paint Pencil stroke can cover adjacent pixels on the
-        # display grid. Score candidate arcs conservatively before drawing.
-        # Do not trade a large number of correct color pixels for missing ink.
         scheduled = set()
-        ink_skipped_risky = 0
-        ink_stopped_on_regression = False
         for contour in sorted(ink_contours,
                               key=lambda c:cv2.arcLength(c,True),
                               reverse=True):
@@ -482,6 +477,8 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
             points = [tuple(map(int,p[0])) for p in contour]
             if not points:
                 continue
+            # RETR_LIST contours may include both sides of a thin ink ring.
+            # Keep a cyclic contour only if its ends touch on the 8-grid.
             cyclic = (len(points)>2 and
                       max(abs(points[0][0]-points[-1][0]),
                           abs(points[0][1]-points[-1][1])) <= 1)
@@ -492,6 +489,8 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
             if cyclic and all(missing):
                 segments = [points+[points[0]]]
             else:
+                # Split at already-correct pixels. Rotate a closed contour
+                # to start after a correct point so wraparound fragments join.
                 if cyclic and not all(missing):
                     cut = missing.index(False)
                     points = points[cut+1:]+points[:cut+1]
@@ -508,21 +507,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
                     segments.append(run)
             for segment in segments:
                 check_cancel()
-                # Estimate a 3x3 Pencil footprint. Only accept a contour arc
-                # when its missing-ink benefit exceeds the adjacent-color risk.
-                candidate = np.zeros((h,w),np.uint8)
-                for x,y in segment:
-                    candidate[y,x] = 1
-                footprint = cv2.dilate(candidate,np.ones((3,3),np.uint8)) != 0
-                benefit = int(np.count_nonzero(
-                    (candidate != 0) & expected_dark & ~actual_dark))
-                risk = int(np.count_nonzero(
-                    footprint & ~expected_dark & ~actual_dark))
-                if benefit <= risk:
-                    ink_skipped_risky += 1
-                    continue
-                before_missing = int(np.count_nonzero(expected_dark & ~actual_dark))
-                before_extra = int(np.count_nonzero(~expected_dark & actual_dark))
+                # One dot or one contiguous missing arc, not the whole ring.
                 mapped = [(left+x,top+y) for x,y in segment]
                 engine.paint.validate_canvas_points(mapped)
                 if len(mapped)==1:
@@ -532,20 +517,11 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
                 scheduled.update(segment)
                 black_planned += 1
                 black_strokes += 1
-                shot = pg.screenshot()
-                actual = np.asarray(shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
-                actual_dark = np.all(actual <= 40,axis=2)
-                after_missing = int(np.count_nonzero(expected_dark & ~actual_dark))
-                after_extra = int(np.count_nonzero(~expected_dark & actual_dark))
-                if after_missing + after_extra > before_missing + before_extra:
-                    print('INK REGRESSION: contour arc increased total dark '
-                          'mismatches; stopping restoration',flush=True)
-                    ink_stopped_on_regression = True
-                    break
-            if ink_stopped_on_regression:
-                break
-        print(f'INK RISK GUARD: skipped={ink_skipped_risky}, '
-              f'stopped_on_regression={ink_stopped_on_regression}',flush=True)
+            # A real screenshot, not an assumed in-memory pixel change,
+            # determines whether overlapping contours still need work.
+            shot = pg.screenshot()
+            actual = np.asarray(shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+            actual_dark = np.all(actual <= 40,axis=2)
         ink_restored = ink_unresolved - int(np.count_nonzero(expected_dark & ~actual_dark))
         print(f'FINAL INK VERIFY: restored={ink_restored}, '
               f'remaining={ink_unresolved-ink_restored}; '
