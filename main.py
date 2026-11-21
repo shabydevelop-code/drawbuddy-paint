@@ -1504,7 +1504,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
 
 def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, finish_limit=1500,
                       black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None,
-                      preview_only=False, legacy_source=False, historical_palette=False):
+                      preview_only=False, legacy_source=False, historical_palette=True):
     """Convert an exact-RGB image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
@@ -1707,10 +1707,12 @@ def main():
                         help='Run the pre-house dog Bucket engine on an existing pixel-map-paint-plan.json')
     parser.add_argument('--source-image', type=Path,
                         help='Source image to fit within 550x500 and quantize')
-    parser.add_argument('--colors', type=int, default=50,
-                        help='Maximum palette colors after Median Cut (default: 50, range: 2..256)')
+    parser.add_argument('--colors', type=int, default=16,
+                        help='Palette color count (default: 16, range: 2..256)')
     parser.add_argument('--historical-palette', action='store_true',
-                        help='Use historical K-means palette and white background cluster with the generic image engine')
+                        help='Use K-means palette (default; retained for compatibility)')
+    parser.add_argument('--median-cut', action='store_true',
+                        help='Use previous Median Cut preprocessing instead of default K-means')
     parser.add_argument('--speed', type=float, default=20,
                         help='Drawing speed multiplier (0..100)')
     parser.add_argument('--legacy-source', action='store_true',
@@ -1726,6 +1728,8 @@ def main():
         parser.error('--speed must be greater than 0 and at most 100')
     if not 2 <= args.colors <= 256:
         parser.error('--colors must be between 2 and 256')
+    if args.historical_palette and args.median_cut:
+        parser.error('--historical-palette cannot be combined with --median-cut')
     if args.historical_palette and args.legacy_source:
         parser.error('--historical-palette cannot be combined with --legacy-source')
     if args.historical_dog_plan:
@@ -1745,7 +1749,7 @@ def main():
         print(f'LOG DIRECTORY: {output_dir}', flush=True)
     draw_source_image(args.source_image, args.speed, colors_limit=args.colors, logs=args.logs,
                       output_dir=output_dir, preview_only=args.preview_only,
-                      historical_palette=args.historical_palette)
+                      historical_palette=(not args.median_cut and not args.legacy_source))
 
 
 if __name__ == '__main__':
