@@ -528,13 +528,13 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         stages.append((1,rgb,cv2.bitwise_and(mask,cv2.bitwise_not(outer_ink))))
     for rgb,mask in color_groups:
         stages.append((2,rgb,mask))
-    # One continuous pencil traversal per four-connected color component.
+    # One continuous pencil traversal per eight-connected color component.
     # A DFS spanning-tree walk may retrace a colored pixel, but never crosses
     # a white cell or a different color. Split long walks into bounded strokes.
     jobs = []
-    max_points_per_stroke = 300
+    max_points_per_stroke = 1200
     for stage,rgb,mask in stages:
-        count,labels,stats,_ = cv2.connectedComponentsWithStats(mask,connectivity=4)
+        count,labels,stats,_ = cv2.connectedComponentsWithStats(mask,connectivity=8)
         for component_id in range(1,count):
             x0 = int(stats[component_id,cv2.CC_STAT_LEFT])
             y0 = int(stats[component_id,cv2.CC_STAT_TOP])
@@ -551,7 +551,8 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             # Stack entries: point and iterator of its 4-neighbors.
             def adjacent(p):
                 x,y = p
-                return ((x+1,y),(x,y+1),(x-1,y),(x,y-1))
+                return ((x+1,y),(x,y+1),(x-1,y),(x,y-1),
+                        (x+1,y+1),(x-1,y+1),(x+1,y-1),(x-1,y-1))
             stack = [(root,iter(adjacent(root)))]
             while stack:
                 point,neighbors = stack[-1]
@@ -607,10 +608,8 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             last_rgb = rgb
         mapped = [(left+x,top+y) for x,y in path]
         engine.paint.validate_canvas_points(mapped)
-        if len(mapped) == 1 or mapped[0] == mapped[-1] and len(mapped)==2:
-            engine.canvas.fill(*mapped[0])
-        else:
-            engine.paint.stroke(mapped,duration=0.008)
+        # A singleton is a pencil dot, never a bucket flood fill.
+        engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,duration=0.008)
         if index % 200 == 0:
             print(f'SHARED-CELL DRAW: {index}/{len(jobs)}',flush=True)
     report = compare_paint_canvas(engine.paint,output/'expected.png',
