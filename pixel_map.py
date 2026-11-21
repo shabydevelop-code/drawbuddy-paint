@@ -352,6 +352,163 @@ def build_pixel_map(source, output, width=500, height=547, grid_scale=4, paint_p
     print(f'Image: {preview}')
 
 
+
+def analyze_continuous_paths(plan_path, output_dir='output/pixel-map'):
+    """Offline 4-connected same-color paths; never interact with Paint.
+
+    Every path follows only pixels belonging to its own palette color.
+    Tree traversal may revisit pixels; that cost is measured, not hidden.
+    """
+    from collections import deque
+
+    data = json.loads(Path(plan_path).read_text(encoding='utf-8'))
+    width, height = data.get('width'), data.get('height')
+    groups = data.get('groups')
+    if (data.get('format') != 'drawbuddy-paint-stroke-plan-v1'
+            or not isinstance(width, int) or not isinstance(height, int)
+            or width < 1 or height < 1 or not isinstance(groups, list)):
+        raise ValueError('Expected a valid pixel Paint plan')
+    preview = np.full((height, width, 3), 255, dtype=np.uint8)
+    output_groups = []
+    original_strokes = 0
+    original_length = 0
+    path_count = 0
+    path_length = 0
+    repeated_pixels = 0
+    for group in groups:
+        rgb_hex = group['rgb']
+        rgb = tuple(bytes.fromhex(rgb_hex.lstrip('#')))
+        runs = group['strokes']
+        if group['background']:
+            if runs:
+                raise ValueError('Background must not contain drawing runs')
+            continue
+        nodes = []
+        by_row = [[] for _ in range(height)]
+        expected = np.zeros((height, width), dtype=np.uint8)
+        for x0, y0, x1, y1 in runs:
+            if not (0 <= x0 <= x1 < width and 0 <= y0 == y1 < height):
+                raise ValueError('Invalid horizontal run')
+            if np.any(expected[y0, x0:x1 + 1]):
+                raise ValueError('Overlapping runs in one color')
+            expected[y0, x0:x1 + 1] = 1
+            idx = len(nodes)
+            nodes.append((x0, x1, y0))
+            by_row[y0].append(idx)
+            original_length += x1 - x0
+        original_strokes += len(nodes)
+        neighbors = [[] for _ in nodes]
+        # Only overlap on adjacent rows: exact 4-neighbor connectivity.
+        for y in range(1, height):
+            above = sorted(by_row[y - 1], key=lambda i: nodes[i][0])
+            below = sorted(by_row[y], key=lambda i: nodes[i][0])
+            j = 0
+            for a in above:
+                ax0, ax1, _ = nodes[a]
+                while j < len(below) and nodes[below[j]][1] < ax0:
+                    j += 1
+                k = j
+                while k < len(below) and nodes[below[k]][0] <= ax1:
+                    b = below[k]
+                    overlap = max(ax0, nodes[b][0])
+                    if overlap <= min(ax1, nodes[b][1]):
+                        neighbors[a].append((b, overlap))
+                        neighbors[b].append((a, overlap))
+                    k += 1
+        visited = set()
+        color_paths = []
+        actual = np.zeros_like(expected)
+        for root in range(len(nodes)):
+            if root in visited:
+                continue
+            visited.add(root)
+            children = [[] for _ in nodes]
+            queue = deque([root])
+            while queue:
+                parent = queue.popleft()
+                for child, x in neighbors[parent]:
+                    if child not in visited:
+                        visited.add(child)
+                        children[parent].append((child, x))
+                        queue.append(child)
+            x0, _, y0 = nodes[root]
+            points = []
+            def add(x, y):
+                if points and points[-1] == [x, y]:
+                    return
+                if points:
+                    px, py = points[-1]
+                    if px != x and py != y:
+                        raise AssertionError('Diagonal path segment')
+                    cv2.line(actual, (px, py), (x, y), 1, 1)
+                else:
+                    actual[y, x] = 1
+                points.append([x, y])
+            # Iterative traversal prevents recursion overflow on tall images.
+            stack = [('visit', root, x0)]
+            while stack:
+                op, node, anchor = stack.pop()
+                x0, x1, y = nodes[node]
+                if op == 'visit':
+                    add(anchor, y)
+                    add(x0, y)
+                    add(x1, y)
+                    add(anchor, y)
+                    for child, cx in reversed(children[node]):
+                        stack.append(('return', node, anchor))
+                        stack.append(('visit', child, cx))
+                        stack.append(('descend', node, cx))
+                elif op == 'descend':
+                    add(anchor, y)
+                    child = next(c for c, cx in children[node] if cx == anchor)
+                    add(anchor, nodes[child][2])
+                elif op == 'return':
+                    # The child ends at its entry x; return to the parent row.
+                    child_y = points[-1][1]
+                    add(points[-1][0], y)
+                    add(anchor, y)
+            color_paths.append(points)
+            path_count += 1
+            path_length += sum(abs(a[0] - b[0]) + abs(a[1] - b[1])
+                               for a, b in zip(points, points[1:]))
+        missing = int(np.count_nonzero((expected == 1) & (actual == 0)))
+        extra = int(np.count_nonzero((expected == 0) & (actual == 1)))
+        if missing or extra:
+            raise AssertionError(f'{rgb_hex}: coverage mismatch missing={missing}, extra={extra}')
+        color_length = sum(sum(abs(a[0] - b[0]) + abs(a[1] - b[1])
+                               for a, b in zip(path, path[1:])) for path in color_paths)
+        repeated_pixels += max(0, color_length + len(color_paths) - int(expected.sum()))
+        preview[expected.astype(bool)] = rgb[::-1]
+        output_groups.append({'rgb': rgb_hex, 'paths': color_paths,
+                              'components': len(color_paths),
+                              'covered_pixels': int(expected.sum()),
+                              'missing_pixels': missing, 'extra_pixels': extra})
+    report = {
+        'format': 'drawbuddy-continuous-path-analysis-v1',
+        'source_plan': str(plan_path), 'width': width, 'height': height,
+        'baseline_horizontal_strokes': original_strokes,
+        'baseline_horizontal_distance_pixels': original_length,
+        'continuous_paths': path_count,
+        'continuous_distance_pixels': path_length,
+        'distance_ratio_to_baseline': round(path_length / max(1, original_length), 3),
+        'estimated_revisited_pixel_steps': repeated_pixels,
+        'coverage': 'exact-4-connected-no-extra-pixels',
+        'note': 'Offline comparison only. Paths retrace pixels and are not yet executed in Paint.',
+    }
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    (output / 'pixel-map-continuous-paths.json').write_text(
+        json.dumps({'report': report, 'groups': output_groups}, separators=(',', ':')),
+        encoding='utf-8')
+    (output / 'pixel-map-continuous-report.json').write_text(
+        json.dumps(report, indent=2), encoding='utf-8')
+    cv2.imwrite(str(output / 'pixel-map-continuous-preview.png'), preview)
+    print('CONTINUOUS PATH ANALYSIS (offline; Paint unchanged)')
+    for key, value in report.items():
+        print(f'  {key}: {value}')
+    print(f'  Report: {output / "pixel-map-continuous-report.json"}')
+    print(f'  Preview: {output / "pixel-map-continuous-preview.png"}')
+
 def main():
     parser = argparse.ArgumentParser(description='Build a full-color pixel map')
     parser.add_argument('source', nargs='?', default='assets/dog-reference.png')
@@ -369,7 +526,12 @@ def main():
                         help='Export faithful 16-color preview and Paint color requirements')
     parser.add_argument('--paint-plan-16', action='store_true',
                         help='Export grouped 1px horizontal strokes for 16 image colors')
+    parser.add_argument('--analyze-continuous', action='store_true',
+                        help='Analyze continuous same-color paths from an existing 16-color Paint plan (no Paint)')
     args = parser.parse_args()
+    if args.analyze_continuous:
+        analyze_continuous_paths('output/pixel-map/pixel-map-paint-plan16.json')
+        return
     build_pixel_map(args.source, args.output, args.width, args.height,
                     args.grid_scale, args.paint_palette_16, args.palette_7,
                     args.compare_palettes, args.map_paint_16,
