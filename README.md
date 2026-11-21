@@ -1,63 +1,39 @@
 # DrawBuddy Paint
 
-DrawBuddy draws a source image in Microsoft Paint using real mouse-driven Pencil contours and Bucket fills. The drawing pipeline accepts any supported source image. It does not paste bitmaps into Paint.
+DrawBuddy draws an exact-color source image in Microsoft Paint using mouse-driven Pencil contours and Bucket fills. It does not paste bitmaps into Paint.
 
 ## Requirements
 
-Windows, Microsoft Paint, Python, and Python packages `pyautogui`, `opencv-python`, `numpy`. Start with a blank white Paint canvas and leave Paint maximized.
+Windows, Microsoft Paint, Python, and Python packages `pyautogui`, `opencv-python`, `numpy`. Open a blank white maximized Paint canvas.
 
-## House — fixed reference
-
-The canonical image is `assets/house-reference.png`.
-
-```powershell
-python -u main.py --house --speed 50
-```
-
-## Any exact-color source image
+## Draw any source image
 
 ```powershell
 python -u main.py --source-image assets/house-reference.png --speed 50
 ```
 
-This mode preserves source RGB values. The image must be no larger than 500×547 and have at most 16 distinct colors. It rejects images requiring resizing or palette approximation.
+Use any supported image path with `--source-image`. The source must be no larger than 500×547 pixels and contain at most 16 exact colors. The engine refuses resizing and palette reduction.
 
-## Existing 16-color plan workflow
+## Optional logs
 
-Generate a 16-color plan from a source image:
-
-```powershell
-python pixel_map.py assets/house-reference.png --width 430 --height 330 --paint-plan-16
-```
-
-Draw using the established contour/Bucket engine:
+By default, no drawing plans or diagnostic files are saved. Screenshot comparison and strict 1:1 validation still run.
 
 ```powershell
-python -u main.py --image-bucket output/pixel-map/pixel-map-paint-plan16.json --speed 50
+python -u main.py --source-image assets/house-reference.png --speed 50 --logs
 ```
 
-The plan uses image-derived colors and therefore approximates a reference with more than 16 colors. Inspect the generated preview and compare the real Paint result with the intended image before claiming fidelity.
+Each run with `--logs` writes its generated plan, comparison images, reports, and timing diagnostics to its own `output/YYYY-MM-DD_HH-MM-SS_microseconds/` directory. Earlier runs are not overwritten. `assets/` contains source images only and is never used for logs.
 
-## Optional diagnostic files
+## Project files
 
-By default, `main.py` keeps the generated source-image plan in memory and does not write diagnostic files. Screenshot comparison and strict 1:1 validation still run. Add `--logs` to save the plan, expected image, screenshots, error overlay, JSON reports and timing diagnostics in a unique `output/YYYY-MM-DD_HH-MM-SS_microseconds/` directory for each run. No previous run's files are overwritten. `assets/` is never used for logs.
+- `assets/`: source images, including the sample house.
+- `main.py`: command-line entry point and contour/Bucket drawing pipeline.
+- `compare_images.py`: Paint screenshot comparison and strict pixel validation.
+- `drawbuddy/`: Paint controls and drawing components.
+- `output/`: locally generated optional diagnostics, excluded from Git.
+- `AGENTS.md`: drawing method and fidelity requirements.
 
-```powershell
-python -u main.py --house --speed 50 --logs
-```
-
-When running `pixel_map.py` directly, its plan output is still written because it is the requested artifact.
-
-## Files
-
-- `assets/`: reference images (the drawing engine is image-independent).
-- `main.py`: entry point and established contour/Bucket implementation.
-- `pixel_map.py`: pixel-map and 16-color plan generation.
-- `drawbuddy/`: Paint controller, drawing engine, UI components and optional region-vectorization utility.
-- `output/`: locally regenerated plans, previews, comparisons and diagnostic captures (not committed).
-- `AGENTS.md`: mandatory drawing and fidelity rules.
-
-The entry point now exposes only `--house`, `--source-image`, and `--image-bucket`. Obsolete experimental painter modules have been removed; standalone analysis scripts are retained separately. Do not treat offline expected images as proof of Paint execution.
+The public drawing interface consists only of `--source-image`, `--speed`, and `--logs`. Internal stroke-plan processing is not a separate CLI mode.
 
 ## Updating from GitHub
 
