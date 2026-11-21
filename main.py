@@ -3,11 +3,12 @@ import argparse
 import json
 import math
 from pathlib import Path
+from datetime import datetime
 from drawbuddy.drawing_engine import DrawingEngine
 from compare_images import compare_paint_canvas
 
 
-def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120, logs=False):
+def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None):
     """Full image: all color components, closed contours, Paint bucket, no raster strokes."""
     import time
     startup_clock = time.perf_counter()
@@ -152,7 +153,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
             'sample_xy': [[int(x),int(y)] for x,y in zip(xs[:30],ys[:30])]
         })
     if logs:
-        diagnostic_dir = Path('output/comparison/image-bucket')
+        diagnostic_dir = output_dir or Path('output/comparison/image-bucket')
         diagnostic_dir.mkdir(parents=True,exist_ok=True)
         (diagnostic_dir/'boundary-diagnostics.json').write_text(
             json.dumps(boundary_diagnostics,indent=2),encoding='utf-8')
@@ -178,7 +179,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     # Only true black source pixels become black marks; never trace both sides of a thin black component.
     details.sort(key=lambda x:(x['rgb'] == (0,0,0),x['rgb'],-x['area']))
     left,top = 250+(500-w)//2,155+(547-h)//2
-    output = Path('output/comparison/image-bucket')
+    output = output_dir or Path('output/comparison/image-bucket')
     if logs:
         output.mkdir(parents=True,exist_ok=True)
         cv2.imwrite(str(output/'expected.png'),source)
@@ -796,7 +797,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
 
 
 def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
-                      black_gap_finish=False, black_gap_limit=120, logs=False):
+                      black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None):
     """Convert a lossless <=16-color image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
@@ -832,14 +833,14 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
         'groups':groups
     }
     if logs:
-        output = Path('output/pixel-map')
+        output = output_dir or Path('output/pixel-map')
         output.mkdir(parents=True,exist_ok=True)
         plan_path = output/'pixel-map-paint-plan16.json'
         plan_path.write_text(json.dumps(plan,separators=(',',':')),encoding='utf-8')
     print(f'SOURCE IMAGE: {source_path}, {w}x{h}, {len(colors)} exact colors; '
           'using existing full contour/Bucket engine',flush=True)
     draw_image_bucket(plan_path if logs else plan,speed,pixel_finish,finish_limit,
-                         black_gap_finish,black_gap_limit,logs=logs)
+                         black_gap_finish,black_gap_limit,logs=logs,output_dir=output_dir)
 
 
 def main():
@@ -861,15 +862,22 @@ def main():
         parser.error('Finishing limits must be positive')
     if args.pixel_perfect_finish and args.black_gap_finish:
         parser.error('Choose only one finishing mode')
+    output_dir = None
+    if args.logs:
+        output_dir = Path('output') / datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
+        output_dir.mkdir(parents=True, exist_ok=False)
+        print(f'LOG DIRECTORY: {output_dir}', flush=True)
     if args.image_bucket is not None:
         draw_image_bucket(args.image_bucket, args.speed,
                              args.pixel_perfect_finish, args.pixel_finish_limit,
-                             args.black_gap_finish, args.black_gap_limit, logs=args.logs)
+                             args.black_gap_finish, args.black_gap_limit,
+                             logs=args.logs, output_dir=output_dir)
     else:
         source_path = Path('assets/house-reference.png') if args.house else args.source_image
         draw_source_image(source_path, args.speed,
                           args.pixel_perfect_finish, args.pixel_finish_limit,
-                          args.black_gap_finish, args.black_gap_limit, logs=args.logs)
+                          args.black_gap_finish, args.black_gap_limit,
+                          logs=args.logs, output_dir=output_dir)
 
 
 if __name__ == '__main__':
