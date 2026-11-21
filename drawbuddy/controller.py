@@ -241,7 +241,7 @@ class PaintController:
                     if x1 != x2:
                         # The old zero-duration jump could be interpreted as
                         # a spurious connector when Paint was under load.
-                        drag_seconds = min(0.12, max(0.035, (x2 - x1) * 0.0003))
+                        drag_seconds = min(0.35, max(0.15, (x2 - x1) * 0.001))
                         pg.moveTo(*self.point(x2, y), duration=drag_seconds)
                     self.wait_until(time.perf_counter() + press_dwell)
                 finally:
