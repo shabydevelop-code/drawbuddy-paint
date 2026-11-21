@@ -759,7 +759,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
           f'errors={report["error_pixels"]}; output={output}')
 
 
-def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None, diagnostic_only=False):
+def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None, diagnostic_only=False, restore_ink=False):
     """Full image: all color components, closed contours, Paint bucket, no raster strokes."""
     import time
     startup_clock = time.perf_counter()
@@ -1340,6 +1340,27 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     else:
         print('FINAL INK DIAGNOSTIC ONLY: no missing dark pixels; '
               'gestures=0',flush=True)
+    if restore_ink and ink_unresolved:
+        # Restore only pixels explicitly dark in the quantized source. This
+        # stage is opt-in so existing dog rendering remains unchanged.
+        missing_ink = expected_dark & ~actual_dark
+        ink_rgb = outline_rgb
+        if previous_rgb != ink_rgb:
+            engine.colors.select_rgb(ink_rgb)
+            previous_rgb = ink_rgb
+            color_switches += 1
+        engine.tools.select('pencil')
+        engine.stroke_size.select(1)
+        for y in np.flatnonzero(np.any(missing_ink,axis=1)):
+            xs = np.flatnonzero(missing_ink[y])
+            for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1):
+                check_cancel()
+                mapped = [(left+int(run[0]),top+int(y)),
+                          (left+int(run[-1]),top+int(y))]
+                engine.paint.validate_canvas_points(mapped)
+                engine.paint.stroke(mapped,duration=0.008)
+                black_strokes += 1
+        print(f'INK RESTORATION: {black_strokes} exact-source horizontal Pencil runs',flush=True)
     # Leave actual/previous_rgb unchanged for the subsequent white layer.
     # Last nested layer: white glints inside black eyes. Keep them after
     # the dark ink pass; do not globally paint white before black.
@@ -1637,7 +1658,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
 def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, finish_limit=1500,
                       black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None,
                       preview_only=False, legacy_source=False, historical_palette=True,
-                       diagnostic_only=False):
+                       diagnostic_only=False, restore_ink=False):
     """Convert an exact-RGB image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
@@ -1778,7 +1799,7 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
           'using existing full contour/Bucket engine',flush=True)
     draw_image_bucket(plan_path if logs else plan,speed,pixel_finish,finish_limit,
                          black_gap_finish,black_gap_limit,logs=logs,output_dir=output_dir,
-                      diagnostic_only=diagnostic_only)
+                      diagnostic_only=diagnostic_only, restore_ink=restore_ink)
 
 
 
@@ -1855,6 +1876,8 @@ def main():
                         help='Compare resized versus quantized contours without Paint')
     parser.add_argument('--preview-only', action='store_true',
                         help='Save resized and quantized preview to output/preview.png; do not launch Paint')
+    parser.add_argument('--restore-ink', action='store_true',
+                        help='Restore missing source-defined dark contours after color fills')
     parser.add_argument('--diagnostic-only', action='store_true',
                         help='Analyze source masks and Bucket plan; save diagnostics without launching Paint')
     parser.add_argument('--logs', action='store_true',
@@ -1886,7 +1909,7 @@ def main():
     draw_source_image(args.source_image, args.speed, colors_limit=args.colors, logs=(args.logs or args.diagnostic_only),
                       output_dir=output_dir, preview_only=args.preview_only,
                       historical_palette=(not args.median_cut and not args.legacy_source),
-                      diagnostic_only=args.diagnostic_only)
+                      diagnostic_only=args.diagnostic_only, restore_ink=args.restore_ink)
 
 
 if __name__ == '__main__':
