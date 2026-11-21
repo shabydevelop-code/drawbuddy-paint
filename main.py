@@ -568,6 +568,29 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             unsafe_regions.append((region,extra))
         else:
             safe_regions.append(region)
+    # Locate the exact source-color boundaries crossed by each proposed
+    # bucket. This is a diagnostic, not a drawing workaround.
+    boundary_diagnostics = []
+    for region,extra in unsafe_regions:
+        pts = np.asarray(region['paths'][0],dtype=np.int32).reshape(-1,1,2)
+        footprint = np.zeros((h,w),np.uint8)
+        cv2.drawContours(footprint,[pts],-1,255,thickness=cv2.FILLED)
+        intended = np.all(source == np.asarray(region['rgb'][::-1],np.uint8),axis=2)
+        ys,xs = np.where((footprint != 0) & ~intended)
+        boundary_diagnostics.append({
+            'rgb': '#%02X%02X%02X' % region['rgb'],
+            'area': int(region['area']),
+            'crossed_pixels': int(extra),
+            'crossed_bbox_xyxy': [int(xs.min()),int(ys.min()),
+                                  int(xs.max()),int(ys.max())],
+            'sample_xy': [[int(x),int(y)] for x,y in zip(xs[:30],ys[:30])]
+        })
+    diagnostic_dir = Path('output/comparison/full-dog-bucket')
+    diagnostic_dir.mkdir(parents=True,exist_ok=True)
+    (diagnostic_dir/'boundary-diagnostics.json').write_text(
+        json.dumps(boundary_diagnostics,indent=2),encoding='utf-8')
+    print('BOUNDARY DIAGNOSTICS: output/comparison/full-dog-bucket/'
+          'boundary-diagnostics.json',flush=True)
     regions = safe_regions
     print(f'BUCKET PREFLIGHT: {len(safe_regions)} safe regions, '
           f'{len(unsafe_regions)} rejected for crossing source colors',flush=True)
