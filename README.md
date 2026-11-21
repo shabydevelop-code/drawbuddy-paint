@@ -38,6 +38,16 @@ python -u main.py --image-bucket output/pixel-map/pixel-map-paint-plan16.json --
 
 The plan uses image-derived colors and therefore approximates a reference with more than 16 colors. Inspect the generated preview and compare the real Paint result with the intended image before claiming fidelity.
 
+## Optional diagnostic files
+
+By default, `main.py` keeps the generated source-image plan in memory and does not write diagnostic files. Screenshot comparison and strict 1:1 validation still run. Add `--logs` to save the plan, expected image, screenshots, error overlay, JSON reports and timing diagnostics under `output/`.
+
+```powershell
+python -u main.py --house --speed 50 --logs
+```
+
+When running `pixel_map.py` directly, its plan output is still written because it is the requested artifact.
+
 ## Files
 
 - `assets/`: reference images (the drawing engine is image-independent).
