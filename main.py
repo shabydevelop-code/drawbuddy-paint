@@ -361,30 +361,8 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             check_cancel()
             engine.tools.select('pencil')
             engine.stroke_size.select(1)
-            # For regions touching source ink, inset their colored boundary
-            # by one pixel. The black foundation then remains exposed as a
-            # frame instead of being overwritten by the color contour.
-            paths = region['paths']
-            if preserve_black_base and rgb != (255,255,255):
-                source_ink = dark_mask != 0
-                near_ink = cv2.dilate(np.uint8(source_ink),
-                                     np.ones((3,3),np.uint8)) != 0
-                if np.any((region['mask'] != 0) & near_ink):
-                    inset = cv2.erode(region['mask'],
-                                     np.ones((3,3),np.uint8))
-                    # Do not alter narrow shapes or disconnected interiors:
-                    # they still use the proven original contour workflow.
-                    n_inset,_,_,_ = cv2.connectedComponentsWithStats(inset,8)
-                    if n_inset == 2 and np.any(inset):
-                        contours,hierarchy = cv2.findContours(
-                            inset,cv2.RETR_CCOMP,cv2.CHAIN_APPROX_NONE)
-                        paths = []
-                        for contour in contours:
-                            points = [tuple(map(int,p[0])) for p in contour]
-                            if points:
-                                paths.append(points+[points[0]])
-            # Draw the enclosing and hole boundaries before Bucket.
-            for path in paths:
+            # All enclosing and hole boundaries must exist before Bucket.
+            for path in region['paths']:
                 mapped = [(left+x,top+y) for x,y in path]
                 engine.paint.validate_canvas_points(mapped)
                 engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
@@ -1218,8 +1196,29 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
             check_cancel()
             engine.tools.select('pencil')
             engine.stroke_size.select(1)
-            # All enclosing and hole boundaries must exist before Bucket.
-            for path in region['paths']:
+            # Opt-in: preserve source-black frames in the black foundation.
+            # Use the source color component as the authoritative boundary;
+            # never trace its outer edge over an ink pixel.
+            paths = region['paths']
+            if preserve_black_base and rgb != (255,255,255):
+                ink_neighbor = cv2.dilate(dark_mask,np.ones((3,3),np.uint8)) != 0
+                if np.any((region['mask'] != 0) & ink_neighbor):
+                    # An inset creates a closed color fence INSIDE the source
+                    # color region, leaving the original black border exposed.
+                    inset = cv2.erode(region['mask'],np.ones((3,3),np.uint8),
+                                      borderType=cv2.BORDER_CONSTANT,borderValue=0)
+                    n_inset,_,_,_ = cv2.connectedComponentsWithStats(inset,8)
+                    if n_inset == 2 and inset[region['seed'][1],region['seed'][0]]:
+                        contours,_ = cv2.findContours(inset,cv2.RETR_CCOMP,
+                                                      cv2.CHAIN_APPROX_NONE)
+                        inset_paths = []
+                        for contour in contours:
+                            points = [tuple(map(int,p[0])) for p in contour]
+                            if len(points)>1:
+                                inset_paths.append(points+[points[0]])
+                        if inset_paths:
+                            paths = inset_paths
+            for path in paths:
                 mapped = [(left+x,top+y) for x,y in path]
                 engine.paint.validate_canvas_points(mapped)
                 engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
