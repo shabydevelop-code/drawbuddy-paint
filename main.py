@@ -255,6 +255,15 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
         raise RuntimeError('No outline ink color found in source plan')
     outline_rgb = max(ink_colors,key=lambda entry:entry[1])[0]
     silhouette = np.uint8(occupied != 0)*255
+    # Fail before any mouse action if a background-sized component is about
+    # to become the black base. A black rectangle is never a safe fallback.
+    silhouette_n, silhouette_labels_check, silhouette_stats_check, _ = (
+        cv2.connectedComponentsWithStats(silhouette, connectivity=8))
+    for silhouette_idx in range(1, silhouette_n):
+        component_area = int(silhouette_stats_check[silhouette_idx, cv2.CC_STAT_AREA])
+        if component_area > int(w*h*0.80):
+            raise RuntimeError('UNSAFE BLACK BASE: nonwhite silhouette covers over 80% '
+                               'of the canvas; check source background segmentation')
     exterior_contours,_ = cv2.findContours(
         silhouette,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
     print(f'DRAW STAGE 1/3: OUTER CONTOURS ({len(exterior_contours)}), '
@@ -840,6 +849,20 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
         rgb = np.asarray(quantized.convert('RGB')).copy()
     rgb[original_black] = (0, 0, 0)
     rgb[original_white] = (255, 255, 255)
+    # Neutral near-white pixels connected to the image border are background,
+    # not part of the subject silhouette. Quantized photo backgrounds otherwise
+    # form a giant nonwhite component that the black-base Bucket floods.
+    lightest = rgb.min(axis=2).astype(np.int16)
+    chroma = rgb.max(axis=2).astype(np.int16) - lightest
+    background_candidate = np.uint8((lightest >= 210) & (chroma <= 18))
+    component_count, component_labels = cv2.connectedComponents(background_candidate, 8)
+    border_ids = np.unique(np.concatenate((component_labels[0, :],
+        component_labels[-1, :], component_labels[:, 0], component_labels[:, -1])))
+    border_ids = border_ids[border_ids != 0]
+    background = np.isin(component_labels, border_ids)
+    background_pixels = int(np.count_nonzero(background & np.any(rgb != 255, axis=2)))
+    rgb[background] = (255, 255, 255)
+    print(f'BORDER BACKGROUND: normalized {background_pixels} near-white pixels', flush=True)
     colors,counts = np.unique(rgb.reshape(-1,3),axis=0,return_counts=True)
     if preview_only:
         preview_path = Path('output') / 'preview.png'
