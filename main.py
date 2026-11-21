@@ -714,10 +714,36 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         points = [tuple(map(int,p[0])) for p in contour]
         if len(points) > 1:
             draw_contour_path(points+[points[0]],outline_rgb)
-    # Color-batched region completion. Each region is outlined, filled,
-    # and checked before the next region begins. No all-contours-first pass
-    # that leaves unfinished regions across the canvas.
+    # Black-base workflow: after closing each exterior silhouette, use
+    # Paint Bucket to make its entire interior dark. Later color-region
+    # boundaries are drawn IN THEIR TARGET COLOR over this black base;
+    # each closed colored boundary then isolates a black pocket for Bucket.
+    # Any small missed edge stays dark rather than becoming a white seam.
+    # Fill each disconnected silhouette separately; never bucket the canvas.
     import pyautogui as pg
+    silhouette_count,silhouette_labels,silhouette_stats,_ = (
+        cv2.connectedComponentsWithStats(silhouette,connectivity=8))
+    engine.tools.select('bucket')
+    for silhouette_id in range(1,silhouette_count):
+        check_cancel()
+        component = np.uint8(silhouette_labels == silhouette_id)*255
+        if int(silhouette_stats[silhouette_id,cv2.CC_STAT_AREA]) < 9:
+            continue
+        inner = cv2.erode(component,np.ones((3,3),np.uint8))
+        if not np.any(inner):
+            continue
+        _,_,_,seed = cv2.minMaxLoc(
+            cv2.distanceTransform(inner,cv2.DIST_L2,3))
+        point = (left+seed[0],top+seed[1])
+        engine.paint.validate_canvas_points([point])
+        engine.canvas.fill(*point)
+        print(f'BLACK BASE BUCKET: silhouette {silhouette_id}/'
+              f'{silhouette_count-1}, area='
+              f'{int(silhouette_stats[silhouette_id,cv2.CC_STAT_AREA])}',
+              flush=True)
+    # The black base is a foundation, not a substitute for the source
+    # color masks. Every nonblack region still needs its own closed
+    # contour, Bucket fill, and screenshot verification.
     color_batches = {}
     for region in regions:
         color_batches.setdefault(region['rgb'],[]).append(region)
@@ -749,6 +775,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                        if color_batches.get(rgb)]
     print(f'NESTED LAYERS: {len(white_after_ink)} white highlights '
           'scheduled after dark ink',flush=True)
+    print('DRAW STAGE 2/3: COLOR CONTOURS + BUCKET OVER BLACK BASE',flush=True)
     print(f'DRAW STAGE 2/3: COMPLETE REGIONS BY COLOR '
           f'({len(batch_order)} colors, {len(regions)} regions)',flush=True)
     for rgb in batch_order:
