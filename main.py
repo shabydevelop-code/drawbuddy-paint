@@ -158,41 +158,6 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         json.dumps(boundary_diagnostics,indent=2),encoding='utf-8')
     print('BOUNDARY DIAGNOSTICS: output/comparison/full-dog-bucket/'
           'boundary-diagnostics.json',flush=True)
-    # Compare quantized source masks with regions that can actually be
-    # bucket-painted. Report omitted pixels by color and their location
-    # before Paint starts; this is strictly diagnostic (no mouse actions).
-    planned_mask = np.zeros((h,w),bool)
-    for region in regions:
-        planned_mask |= region['mask'] != 0
-    excluded = (~planned_mask) & (np.any(source != 255,axis=2))
-    excluded_by_color = []
-    for rgb,mask in groups:
-        lost = (mask != 0) & excluded
-        ys,xs = np.where(lost)
-        if len(xs):
-            excluded_by_color.append({
-                'rgb':'#%02X%02X%02X' % rgb,
-                'pixels':int(len(xs)),
-                'bbox_xyxy':[int(xs.min()),int(ys.min()),
-                             int(xs.max()),int(ys.max())],
-                'sample_xy':[[int(x),int(y)] for x,y in zip(xs[:20],ys[:20])]
-            })
-    excluded_by_color.sort(key=lambda entry:-entry['pixels'])
-    print(f'SOURCE VS PLAN: {int(np.count_nonzero(excluded))} '
-          f'nonwhite pixels outside Bucket regions; '
-          f'by_color={[(e["rgb"],e["pixels"]) for e in excluded_by_color]}',
-          flush=True)
-    if logs:
-        # Reuse the existing diagnostics file; avoid proliferating output
-        # artifacts. Include original unsafe-region diagnostics alongside
-        # the source-to-plan coverage analysis.
-        (diagnostic_dir/'boundary-diagnostics.json').write_text(
-            json.dumps({'unsafe_bucket_regions':boundary_diagnostics,
-                        'source_vs_plan':{
-                            'unplanned_nonwhite_pixels':int(np.count_nonzero(excluded)),
-                            'excluded_by_color':excluded_by_color,
-                            'note':'Black source pixels are intentionally absent from Bucket regions; inspect nonblack colors separately.'
-                        }},indent=2),encoding='utf-8')
     # Holes are not missing pixels: RETR_EXTERNAL deliberately surrounds
     # inner islands. Paint outer areas first, then repaint their inner islands.
     # This is a layered bucket plan, not thousands of pixel-by-pixel strokes.
@@ -945,6 +910,41 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
             json.dumps(boundary_diagnostics,indent=2),encoding='utf-8')
         print('BOUNDARY DIAGNOSTICS: output/comparison/image-bucket/'
               'boundary-diagnostics.json',flush=True)
+    # Compare quantized source masks with regions that can actually be
+    # bucket-painted. Report omitted pixels by color and their location
+    # before Paint starts; this is strictly diagnostic (no mouse actions).
+    planned_mask = np.zeros((h,w),bool)
+    for region in regions:
+        planned_mask |= region['mask'] != 0
+    excluded = (~planned_mask) & (np.any(source != 255,axis=2))
+    excluded_by_color = []
+    for rgb,mask in groups:
+        lost = (mask != 0) & excluded
+        ys,xs = np.where(lost)
+        if len(xs):
+            excluded_by_color.append({
+                'rgb':'#%02X%02X%02X' % rgb,
+                'pixels':int(len(xs)),
+                'bbox_xyxy':[int(xs.min()),int(ys.min()),
+                             int(xs.max()),int(ys.max())],
+                'sample_xy':[[int(x),int(y)] for x,y in zip(xs[:20],ys[:20])]
+            })
+    excluded_by_color.sort(key=lambda entry:-entry['pixels'])
+    print(f'SOURCE VS PLAN: {int(np.count_nonzero(excluded))} '
+          f'nonwhite pixels outside Bucket regions; '
+          f'by_color={[(e["rgb"],e["pixels"]) for e in excluded_by_color]}',
+          flush=True)
+    if logs:
+        # Reuse the existing diagnostics file; avoid proliferating output
+        # artifacts. Include original unsafe-region diagnostics alongside
+        # the source-to-plan coverage analysis.
+        (diagnostic_dir/'boundary-diagnostics.json').write_text(
+            json.dumps({'unsafe_bucket_regions':boundary_diagnostics,
+                        'source_vs_plan':{
+                            'unplanned_nonwhite_pixels':int(np.count_nonzero(excluded)),
+                            'excluded_by_color':excluded_by_color,
+                            'note':'Black source pixels are intentionally absent from Bucket regions; inspect nonblack colors separately.'
+                        }},indent=2),encoding='utf-8')
     # Holes are not missing pixels: RETR_EXTERNAL deliberately surrounds
     # inner islands. Paint outer areas first, then repaint their inner islands.
     # This is a layered bucket plan, not thousands of pixel-by-pixel strokes.
