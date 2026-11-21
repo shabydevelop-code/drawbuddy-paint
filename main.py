@@ -793,7 +793,6 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             for path in region['paths']:
                 mapped = [(left+x,top+y) for x,y in path]
                 engine.paint.validate_canvas_points(mapped)
-                log_final_pencil('white_eye_highlight',(255,255,255),mapped)
                 engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
                                     duration=0.012)
             seed = region['seed']
@@ -935,6 +934,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             for path in region['paths']:
                 mapped = [(left+x,top+y) for x,y in path]
                 engine.paint.validate_canvas_points(mapped)
+                log_final_pencil('white_eye_highlight',(255,255,255),mapped)
                 engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
                                     duration=0.012)
             seed = region['seed']
