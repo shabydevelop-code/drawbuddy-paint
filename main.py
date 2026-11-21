@@ -844,40 +844,23 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Draw source images in Microsoft Paint with Pencil contours and Bucket fills.')
-    source_group = parser.add_mutually_exclusive_group(required=True)
-    source_group.add_argument('--house', action='store_true', help='Use assets/house-reference.png')
-    source_group.add_argument('--source-image', type=Path, help='Exact-color source image (up to 16 colors)')
-    source_group.add_argument('--image-bucket', type=Path, help='Existing 16-color Paint stroke plan')
-    parser.add_argument('--speed', type=float, default=20, help='Drawing speed multiplier (0..100)')
-    parser.add_argument('--logs', action='store_true', help='Save plans and Paint comparison diagnostics (off by default)')
-    parser.add_argument('--pixel-perfect-finish', action='store_true', help='Experimental local pixel correction')
-    parser.add_argument('--pixel-finish-limit', type=int, default=1500)
-    parser.add_argument('--black-gap-finish', action='store_true', help='Report black gaps without unsafe repair')
-    parser.add_argument('--black-gap-limit', type=int, default=120)
+    parser = argparse.ArgumentParser(description='Draw a source image in Microsoft Paint using Pencil contours and Bucket fills.')
+    parser.add_argument('--source-image', type=Path, required=True,
+                        help='Exact-color source image (up to 16 colors)')
+    parser.add_argument('--speed', type=float, default=20,
+                        help='Drawing speed multiplier (0..100)')
+    parser.add_argument('--logs', action='store_true',
+                        help='Save diagnostics in a unique output directory (off by default)')
     args = parser.parse_args()
     if not math.isfinite(args.speed) or not 0 < args.speed <= 100:
         parser.error('--speed must be greater than 0 and at most 100')
-    if args.pixel_finish_limit < 1 or args.black_gap_limit < 1:
-        parser.error('Finishing limits must be positive')
-    if args.pixel_perfect_finish and args.black_gap_finish:
-        parser.error('Choose only one finishing mode')
     output_dir = None
     if args.logs:
         output_dir = Path('output') / datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
         output_dir.mkdir(parents=True, exist_ok=False)
         print(f'LOG DIRECTORY: {output_dir}', flush=True)
-    if args.image_bucket is not None:
-        draw_image_bucket(args.image_bucket, args.speed,
-                             args.pixel_perfect_finish, args.pixel_finish_limit,
-                             args.black_gap_finish, args.black_gap_limit,
-                             logs=args.logs, output_dir=output_dir)
-    else:
-        source_path = Path('assets/house-reference.png') if args.house else args.source_image
-        draw_source_image(source_path, args.speed,
-                          args.pixel_perfect_finish, args.pixel_finish_limit,
-                          args.black_gap_finish, args.black_gap_limit,
-                          logs=args.logs, output_dir=output_dir)
+    draw_source_image(args.source_image, args.speed, logs=args.logs,
+                      output_dir=output_dir)
 
 
 if __name__ == '__main__':
