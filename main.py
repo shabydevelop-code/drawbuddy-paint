@@ -1504,7 +1504,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
 
 def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, finish_limit=1500,
                       black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None,
-                      preview_only=False, legacy_source=False):
+                      preview_only=False, legacy_source=False, historical_palette=False):
     """Convert an exact-RGB image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
@@ -1535,15 +1535,32 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
         if exact_colors > 256:
             raise ValueError(f'Legacy source has {exact_colors} exact colors; use an already reduced, limited-color dog image (max 256 colors)')
         print(f'LEGACY SOURCE: original pixels preserved, {exact_colors} exact colors; no resize, quantization or background normalization', flush=True)
+    if historical_palette:
+        # Match pixel_map.py's historical 16-color K-means preprocessing.
+        # Unlike Median Cut, the background is the center nearest white;
+        # its entire cluster is left as the prefilled white canvas.
+        pixels = rgb.reshape(-1, 3).astype(np.float32)
+        cv2.setRNGSeed(42)
+        _, labels, centers = cv2.kmeans(
+            pixels, colors_limit, None,
+            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.2),
+            5, cv2.KMEANS_PP_CENTERS)
+        centers = np.clip(np.rint(centers), 0, 255).astype(np.uint8)
+        background_id = int(np.argmin(np.sum(
+            (centers.astype(np.int32) - np.array([255, 255, 255])) ** 2,
+            axis=1)))
+        centers[background_id] = (255, 255, 255)
+        rgb = centers[labels.reshape(h, w)]
+        print(f'HISTORICAL PALETTE: K-means {colors_limit} colors, white background cluster', flush=True)
     original_black = np.all(rgb == (0, 0, 0), axis=2)
     original_white = np.all(rgb == (255, 255, 255), axis=2)
     reserved = int(original_black.any()) + int(original_white.any())
     if reserved and colors_limit < reserved:
         raise ValueError(f'--colors must be at least {reserved} to preserve existing black/white pixels')
-    if not legacy_source:
+    if not legacy_source and not historical_palette:
         from PIL import Image
     palette_size = colors_limit - reserved
-    if legacy_source:
+    if legacy_source or historical_palette:
         pass
     elif palette_size == 0:
         if np.any(~(original_black | original_white)):
@@ -1566,7 +1583,7 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
     border_ids = border_ids[border_ids != 0]
     background = np.isin(component_labels, border_ids)
     background_pixels = int(np.count_nonzero(background & np.any(rgb != 255, axis=2)))
-    if not legacy_source:
+    if not legacy_source and not historical_palette:
         rgb[background] = (255, 255, 255)
     print(f'BORDER BACKGROUND: normalized {background_pixels} near-white pixels', flush=True)
     colors,counts = np.unique(rgb.reshape(-1,3),axis=0,return_counts=True)
@@ -1692,6 +1709,8 @@ def main():
                         help='Source image to fit within 550x500 and quantize')
     parser.add_argument('--colors', type=int, default=50,
                         help='Maximum palette colors after Median Cut (default: 50, range: 2..256)')
+    parser.add_argument('--historical-palette', action='store_true',
+                        help='Use historical K-means palette and white background cluster with the generic image engine')
     parser.add_argument('--speed', type=float, default=20,
                         help='Drawing speed multiplier (0..100)')
     parser.add_argument('--legacy-source', action='store_true',
@@ -1707,6 +1726,8 @@ def main():
         parser.error('--speed must be greater than 0 and at most 100')
     if not 2 <= args.colors <= 256:
         parser.error('--colors must be between 2 and 256')
+    if args.historical_palette and args.legacy_source:
+        parser.error('--historical-palette cannot be combined with --legacy-source')
     if args.historical_dog_plan:
         if args.source_image or args.compare_preprocessing or args.preview_only or args.legacy_source:
             parser.error('--historical-dog-plan cannot be combined with source/preprocessing modes')
@@ -1723,7 +1744,8 @@ def main():
         output_dir.mkdir(parents=True, exist_ok=False)
         print(f'LOG DIRECTORY: {output_dir}', flush=True)
     draw_source_image(args.source_image, args.speed, colors_limit=args.colors, logs=args.logs,
-                      output_dir=output_dir, preview_only=args.preview_only)
+                      output_dir=output_dir, preview_only=args.preview_only,
+                      historical_palette=args.historical_palette)
 
 
 if __name__ == '__main__':
