@@ -1650,12 +1650,66 @@ def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None, color
     print('DONE: pixel plan drawn in Paint; no automatic publication.')
 
 
+
+def draw_house(speed):
+    """Draw a geometric house with real Paint Pencil contours and Bucket fills."""
+    from drawbuddy.controller import check_cancel
+    import pyautogui as pg
+    engine = DrawingEngine(speed=speed)
+    left, top = 280, 180
+    # Deliberately separated closed regions. All coordinates are relative
+    # to the house's 430x330 drawing area, never source-pixel scanlines.
+    regions = [
+        ('chimney', (177, 85, 67), [(285,38),(314,38),(314,103),(285,103)], (299,54)),
+        ('walls', (247, 224, 177), [(100,121),(330,121),(330,290),(100,290)], (215,155)),
+        ('roof', (195, 52, 48), [(77,121),(215,25),(353,121)], (215,80)),
+        ('path', (204, 192, 168), [(189,290),(241,290),(270,325),(160,325)], (215,310)),
+        ('door', (129, 79, 48), [(185,207),(245,207),(245,290),(185,290)], (215,250)),
+        ('left_window', (90, 175, 219), [(123,162),(172,162),(172,207),(123,207)], (146,183)),
+        ('right_window', (90, 175, 219), [(258,162),(307,162),(307,207),(258,207)], (280,183)),
+    ]
+    # Check the complete plan before the first Paint interaction.
+    for name, rgb, vertices, seed in regions:
+        if len(vertices) < 3 or not all(
+            0 <= x < 430 and 0 <= y < 330 for x,y in vertices+[seed]
+        ):
+            raise ValueError(f'Invalid house region: {name}')
+        engine.paint.validate_canvas_points(
+            [(left+x,top+y) for x,y in vertices+[seed]])
+    print('HOUSE STAGE 1/2: closed black outlines',flush=True)
+    engine.tools.select('pencil')
+    engine.stroke_size.select(1)
+    engine.colors.select_rgb((0,0,0))
+    for name, rgb, vertices, seed in regions:
+        check_cancel()
+        path = [(left+x,top+y) for x,y in vertices+[vertices[0]]]
+        engine.paint.stroke(path,duration=0.012)
+        print(f'HOUSE OUTLINE: {name}',flush=True)
+    print('HOUSE STAGE 2/2: Bucket fills',flush=True)
+    engine.tools.select('bucket')
+    for name, rgb, vertices, seed in regions:
+        check_cancel()
+        engine.colors.select_rgb(rgb)
+        engine.tools.select('bucket')
+        engine.canvas.fill(left+seed[0],top+seed[1])
+        print(f'HOUSE FILL: {name} RGB={rgb}',flush=True)
+    # A small doorknob is a meaningful single pencil detail.
+    engine.colors.select_rgb((242, 202, 91))
+    engine.tools.select('pencil')
+    engine.stroke_size.select(1)
+    knob = (left+234,top+252)
+    engine.paint.validate_canvas_points([knob])
+    engine.canvas.fill(*knob)
+    print('HOUSE COMPLETE: review the Paint canvas; actual RGB fidelity is unverified',flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
     parser.add_argument('--paint-plan', type=Path, help='Validate or draw a 16-color pixel stroke plan')
     parser.add_argument('--ear-contour-test', type=Path, help='Draw one real upper-head outline gesture from the pixel plan')
     parser.add_argument('--region-bucket-test', type=Path, help='Outline one real closed color region and fill it with Paint bucket')
     parser.add_argument('--neighbor-regions-test', type=Path, help='Draw and bucket-fill nearby distinct color regions')
+    parser.add_argument('--house', action='store_true', help='Draw a geometric house with Pencil contours and Bucket fills')
     parser.add_argument('--full-dog-bucket', type=Path, help='Draw entire color pixel map with closed contours and bucket fills')
     parser.add_argument('--pixel-perfect-finish', action='store_true', help='Experimental pixel print correction after drawing')
     parser.add_argument('--pixel-finish-limit', type=int, default=1500, help='Maximum finishing strokes')
@@ -1690,6 +1744,14 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
+    if args.house:
+        if args.full_dog_bucket is not None:
+            parser.error('--house cannot be combined with --full-dog-bucket')
+        speed = args.speed if args.speed is not None else 20
+        if not math.isfinite(speed) or not 0 < speed <= 100:
+            parser.error('Invalid drawing speed')
+        draw_house(float(speed))
+        return
     if args.full_dog_bucket is not None:
         if args.neighbor_regions_test or args.region_bucket_test or args.ear_contour_test or args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
             parser.error('--full-dog-bucket must be used alone')
