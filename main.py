@@ -464,11 +464,16 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
 
 def draw_full_dog_bucket(plan_path, speed):
     """Full image: all color components, closed contours, Paint bucket, no raster strokes."""
+    import time
+    startup_clock = time.perf_counter()
     import cv2
     import numpy as np
-    import time
     from drawbuddy.controller import check_cancel
+    import_seconds = time.perf_counter() - startup_clock
+    stage_clock = time.perf_counter()
     data = json.loads(Path(plan_path).read_text(encoding='utf-8'))
+    read_seconds = time.perf_counter() - stage_clock
+    stage_clock = time.perf_counter()
     w, h = data.get('width'), data.get('height')
     if (data.get('format') != 'drawbuddy-paint-stroke-plan-v1'
             or not isinstance(w,int) or not isinstance(h,int)
@@ -505,6 +510,8 @@ def draw_full_dog_bucket(plan_path, speed):
     # recovered by the contour/bucket planner when necessary.
     white_mask = np.uint8(occupied == 0)*255
     groups.append(((255,255,255),white_mask))
+    mask_seconds = time.perf_counter() - stage_clock
+    stage_clock = time.perf_counter()
     # Stage 1: paint broad color surfaces. Stage 2: draw fine black
     # features LAST, so feet/toe lines are never covered by later fills.
     regions = []
@@ -549,6 +556,8 @@ def draw_full_dog_bucket(plan_path, speed):
         if area >= 1000: return 0
         if area >= 100: return 1
         return 2
+    analysis_seconds = time.perf_counter() - stage_clock
+    stage_clock = time.perf_counter()
     # Coarse-to-fine, group by RGB inside each tier to reduce UI dialogs.
     regions.sort(key=lambda x:(tier(x['area']),x['rgb'],-x['area']))
     # Nonblack thin marks first, black details last, irrespective of size.
@@ -560,8 +569,23 @@ def draw_full_dog_bucket(plan_path, speed):
     print(f'FULL DOG: {len(regions)} fill regions, {len(details)} thin details, '
           f'{omitted_pixels} noise pixels omitted; black details last')
     print('Open a NEW blank white maximized Paint canvas. F8 cancels.')
+    planning_seconds = time.perf_counter() - stage_clock
+    stage_clock = time.perf_counter()
     engine = DrawingEngine(speed=speed)
     engine.stroke_size.select(1)
+    paint_init_seconds = time.perf_counter() - stage_clock
+    startup_total_seconds = time.perf_counter() - startup_clock
+    startup_timings = {
+        'imports_seconds': round(import_seconds,3),
+        'read_pixel_map_seconds': round(read_seconds,3),
+        'build_color_masks_seconds': round(mask_seconds,3),
+        'analyze_regions_seconds': round(analysis_seconds,3),
+        'prepare_plan_and_preview_seconds': round(planning_seconds,3),
+        'initialize_paint_seconds': round(paint_init_seconds,3),
+        'total_before_drawing_seconds': round(startup_total_seconds,3),
+    }
+    print('STARTUP TIMING:', json.dumps(startup_timings,ensure_ascii=False),flush=True)
+    (output/'startup-timing.json').write_text(json.dumps(startup_timings,indent=2),encoding='utf-8')
     started = time.perf_counter()
     completed = 0
     color_switches = 0
@@ -694,6 +718,7 @@ def draw_full_dog_bucket(plan_path, speed):
     report['white_gap_repair_strokes'] = repair_strokes
     report['white_gap_skipped_pixels'] = skipped
     report['elapsed_seconds'] = round(time.perf_counter()-started,3)
+    report['startup_timing'] = startup_timings
     (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(f'FULL DOG DONE: exact match={report["exact_pixel_match_percent"]}%, '
           f'errors={report["error_pixels"]}; output={output}')
