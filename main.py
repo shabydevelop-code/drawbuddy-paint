@@ -487,9 +487,9 @@ def execute_continuous_path_test(path, speed, limit):
                    or not (0 <= p[0] < width and 0 <= p[1] < height)
                    for p in points):
                 raise ValueError('Invalid continuous path coordinates')
-            if any(abs(a[0]-b[0]) + abs(a[1]-b[1]) != 1
+            if any((a[0] != b[0] and a[1] != b[1])
                    for a, b in zip(points, points[1:])):
-                raise ValueError('Non-adjacent continuous path points')
+                raise ValueError('Diagonal continuous path segment')
             paths.append(points)
         if len(paths) >= limit:
             groups.append((rgb, paths))
