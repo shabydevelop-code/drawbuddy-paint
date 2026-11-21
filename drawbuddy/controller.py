@@ -207,11 +207,11 @@ class PaintController:
         time.sleep(0.01)
 
     def raster_runs(self, runs):
-        """Draw independent horizontal spans, never connecting their endpoints.
+        """Draw isolated raster spans with paced Paint mouse events.
 
-        A short release dwell lets Paint consume mouseUp before the pointer
-        moves to the next span; otherwise long accidental connector lines
-        can appear on fast runs.
+        Paint can lose rapid input transitions under load, leaving random
+        connector lines. Keep a settled button-up state before repositioning,
+        then use a nonzero-duration drag and a settled button-up afterward.
         """
         if not runs:
             return
@@ -226,20 +226,24 @@ class PaintController:
         self.activate()
         old_pause, old_min = pg.PAUSE, pg.MINIMUM_DURATION
         pg.PAUSE, pg.MINIMUM_DURATION = 0, 0
-        dwell = max(0.002, 0.025 / self.drawing_speed)
-        release_dwell = 0.012
+        release_dwell = 0.035
+        press_dwell = 0.012
         try:
             for i, (x1, x2, y) in enumerate(runs):
                 check_cancel()
-                # Explicitly release before moving to a disconnected span.
                 pg.mouseUp(button='left')
                 self.wait_until(time.perf_counter() + release_dwell)
                 pg.moveTo(*self.point(x1, y), duration=0)
+                self.wait_until(time.perf_counter() + press_dwell)
                 pg.mouseDown(button='left')
                 try:
+                    self.wait_until(time.perf_counter() + press_dwell)
                     if x1 != x2:
-                        pg.moveTo(*self.point(x2, y), duration=0)
-                    self.wait_until(time.perf_counter() + dwell)
+                        # The old zero-duration jump could be interpreted as
+                        # a spurious connector when Paint was under load.
+                        drag_seconds = min(0.12, max(0.035, (x2 - x1) * 0.0003))
+                        pg.moveTo(*self.point(x2, y), duration=drag_seconds)
+                    self.wait_until(time.perf_counter() + press_dwell)
                 finally:
                     pg.mouseUp(button='left')
                     self.wait_until(time.perf_counter() + release_dwell)
