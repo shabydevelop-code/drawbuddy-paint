@@ -568,11 +568,14 @@ def draw_full_dog_bucket(plan_path, speed):
     cv2.imwrite(str(output/'expected.png'),source)
     print(f'FULL DOG: {len(regions)} fill regions, {len(details)} thin details, '
           f'{omitted_pixels} noise pixels omitted; black details last')
-    print('Open a NEW blank white maximized Paint canvas. F8 cancels.')
+    print('Open a NEW blank white maximized Paint canvas. F8 cancels.',flush=True)
     planning_seconds = time.perf_counter() - stage_clock
     stage_clock = time.perf_counter()
+    print(f'STARTUP: imports={import_seconds:.3f}s, map={read_seconds:.3f}s, masks={mask_seconds:.3f}s, regions={analysis_seconds:.3f}s, plan={planning_seconds:.3f}s',flush=True)
+    print('STARTUP: initializing Paint...',flush=True)
     engine = DrawingEngine(speed=speed)
     engine.stroke_size.select(1)
+    print(f'STARTUP: Paint initialized in {time.perf_counter()-stage_clock:.3f}s',flush=True)
     paint_init_seconds = time.perf_counter() - stage_clock
     startup_total_seconds = time.perf_counter() - startup_clock
     startup_timings = {
@@ -590,73 +593,45 @@ def draw_full_dog_bucket(plan_path, speed):
     completed = 0
     color_switches = 0
     previous_rgb = None
-    # Paint each region completely before moving to the next color.
-    # Screenshot the local rectangle only, and repair narrow white gaps
-    # inside that region while its original RGB is still selected.
-    import pyautogui as pg
+    # Deterministic local edge coverage: no screenshots or forced display
+    # refresh during drawing. A one-pixel inner boundary closes narrow
+    # contour/bucket seams while retaining the target region color.
     repaired = 0
     repair_strokes = 0
     skipped = 0
     def finish_region(region, rgb):
-        nonlocal repaired, repair_strokes, skipped
+        nonlocal repaired, repair_strokes
         contour = np.asarray(region['paths'][0],np.int32)
         x,y,bw,bh = cv2.boundingRect(contour)
-        pad = 2
-        x0,y0 = max(0,x-pad),max(0,y-pad)
-        x1,y1 = min(w,x+bw+pad),min(h,y+bh+pad)
-        local_mask = np.zeros((y1-y0,x1-x0),np.uint8)
+        if bw < 3 or bh < 3:
+            return 0
+        x0,y0 = max(0,x-1),max(0,y-1)
+        x1,y1 = min(w,x+bw+1),min(h,y+bh+1)
+        local = np.zeros((y1-y0,x1-x0),np.uint8)
         shifted = contour - np.array([x0,y0],np.int32)
-        cv2.fillPoly(local_mask,[shifted],255)
-        # Compare only pixels belonging to the requested RGB. This prevents
-        # a repair from erasing dark outlines or painting neighboring colors.
-        expected_rgb = np.asarray(rgb,np.uint8)
-        local_target = cv2.cvtColor(source[y0:y1,x0:x1],cv2.COLOR_BGR2RGB)
-        local_mask &= np.uint8(np.all(local_target == expected_rgb,axis=2))*255
-        engine.paint.refresh_display()
-        sx,sy = engine.paint.point(left+x0,top+y0)
-        shot = pg.screenshot()
-        if sx < 0 or sy < 0 or sx+x1-x0 > shot.width or sy+y1-y0 > shot.height:
-            raise RuntimeError('Region repair screenshot crop outside screen')
-        actual = np.asarray(shot.crop((sx,sy,sx+x1-x0,sy+y1-y0)).convert('RGB'))
-        missing = np.uint8((local_mask != 0) & np.all(actual >= 245,axis=2))
-        count,labels,stats,_ = cv2.connectedComponentsWithStats(missing,8)
-        paths = []
-        for idx in range(1,count):
-            area = int(stats[idx,cv2.CC_STAT_AREA])
-            component = np.uint8(labels == idx)
-            if area > 350 or cv2.distanceTransform(component,cv2.DIST_L2,3).max() > 3.5:
-                skipped += area
-                continue
-            yy,xx = np.where(component)
-            remaining = set(zip(xx.tolist(),yy.tolist()))
-            while remaining:
-                first = min(remaining,key=lambda p:(p[1],p[0]))
-                remaining.remove(first)
-                path = [first]
-                while True:
-                    cx,cy = path[-1]
-                    neighbors = [(cx+dx,cy+dy) for dx,dy in
-                                 ((1,0),(0,1),(-1,0),(0,-1),(1,1),(-1,1),(1,-1),(-1,-1))
-                                 if (cx+dx,cy+dy) in remaining]
-                    if not neighbors:
-                        break
-                    nxt = neighbors[0]
-                    remaining.remove(nxt)
-                    path.append(nxt)
-                paths.append(path)
+        cv2.fillPoly(local,[shifted],255)
+        target = cv2.cvtColor(source[y0:y1,x0:x1],cv2.COLOR_BGR2RGB)
+        local &= np.uint8(np.all(target == np.asarray(rgb,np.uint8),axis=2))*255
+        # Trace the inner boundary of this exact-color component only.
+        inner = cv2.erode(local,np.ones((3,3),np.uint8))
+        boundary = cv2.subtract(local,inner)
+        paths,_ = cv2.findContours(boundary,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
+        count = 0
         if paths:
             engine.tools.select('pencil')
-            for path in paths:
-                check_cancel()
-                mapped = [(left+x0+px,top+y0+py) for px,py in path]
-                engine.paint.validate_canvas_points(mapped)
-                if len(mapped) == 1:
-                    engine.canvas.fill(*mapped[0])
-                else:
-                    engine.paint.stroke(mapped,duration=0.008)
-                repaired += len(path)
-                repair_strokes += 1
-        return len(paths)
+        for path in paths:
+            if len(path) < 2:
+                continue
+            pts = [tuple(map(int,v[0])) for v in path]
+            if len(pts) > 2:
+                pts.append(pts[0])
+            mapped = [(left+x0+px,top+y0+py) for px,py in pts]
+            engine.paint.validate_canvas_points(mapped)
+            engine.paint.stroke(mapped,duration=0.008)
+            repaired += len(pts)
+            repair_strokes += 1
+            count += 1
+        return count
 
     for region in regions:
         check_cancel()
@@ -692,9 +667,7 @@ def draw_full_dog_bucket(plan_path, speed):
             color_switches += 1
         engine.tools.select('pencil')
         contour = detail['contour']
-        epsilon = 0.45 if rgb == (0,0,0) else 0.8
-        simplified = cv2.approxPolyDP(contour,epsilon,True).reshape(-1,2)
-        points = [tuple(map(int,p)) for p in simplified]
+        points = [tuple(map(int,v[0])) for v in contour]
         if len(points) > 2:
             points.append(points[0])
         mapped = [(left+x,top+y) for x,y in points]
@@ -705,7 +678,6 @@ def draw_full_dog_bucket(plan_path, speed):
             engine.paint.stroke(mapped,duration=0.012)
         if i % 50 == 0:
             print(f'  Details: {i}/{len(details)}')
-    engine.paint.refresh_display()
     report = compare_paint_canvas(engine.paint,output/'expected.png',
                                   w,h,left,top,output=output,tolerance=0)
     report['test'] = 'full dog: broad fills followed by thin details and black lines'
@@ -717,6 +689,7 @@ def draw_full_dog_bucket(plan_path, speed):
     report['white_gap_repair_attempted_pixels'] = repaired
     report['white_gap_repair_strokes'] = repair_strokes
     report['white_gap_skipped_pixels'] = skipped
+    report['repair_method'] = 'deterministic boundary tracing without intermediate screenshots'
     report['elapsed_seconds'] = round(time.perf_counter()-started,3)
     report['startup_timing'] = startup_timings
     (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
