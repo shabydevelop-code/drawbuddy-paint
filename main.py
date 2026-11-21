@@ -816,13 +816,33 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     white = np.all(actual >= 248,axis=2)
     expected_ink = np.any(target < 248,axis=2)
     painted = ~white
-    # Detect single-cell white seams enclosed horizontally or vertically
-    # by already-painted cells. Do not modify intentional source white.
-    surrounded_h = np.zeros((h,w),bool)
-    surrounded_v = np.zeros((h,w),bool)
-    surrounded_h[:,1:-1] = painted[:,:-2] & painted[:,2:]
-    surrounded_v[1:-1,:] = painted[:-2,:] & painted[2:,:]
-    gaps = white & expected_ink & (surrounded_h | surrounded_v)
+    # A seam can be an entire connected one-pixel-wide corridor, not
+    # necessarily a single white cell flanked by colored pixels. Identify
+    # narrow *missing* regions from the actual Paint screenshot. Do not
+    # touch intentional source-white pixels or broad unfilled interiors.
+    missing = np.uint8(white & expected_ink)
+    missing_count,missing_labels,_,_ = cv2.connectedComponentsWithStats(
+        missing,connectivity=8)
+    gaps = np.zeros((h,w),bool)
+    painted_u8 = np.uint8(painted)
+    # Opposite-side painted neighbors prove that a missing corridor lies
+    # between two already-drawn surfaces, rather than inside a blank area.
+    opposite = np.zeros((h,w),bool)
+    opposite[:,1:-1] |= painted[:,:-2] & painted[:,2:]
+    opposite[1:-1,:] |= painted[:-2,:] & painted[2:,:]
+    opposite[1:-1,1:-1] |= painted[:-2,:-2] & painted[2:,2:]
+    opposite[1:-1,1:-1] |= painted[:-2,2:] & painted[2:,:-2]
+    for component_id in range(1,missing_count):
+        component = np.uint8(missing_labels == component_id)
+        # One-pixel-wide corridors have no fully surrounded 3x3 block.
+        # Restrict repairs to components touching opposite painted sides.
+        if np.any(cv2.erode(component,np.ones((3,3),np.uint8))):
+            continue
+        if np.any((component != 0) & opposite):
+            gaps |= component != 0
+    print(f'ONE-PIXEL GAP DETECTION: {int(np.count_nonzero(missing))} '
+          f'missing nonwhite pixels, {int(np.count_nonzero(gaps))} '
+          'in narrow enclosed seams',flush=True)
     gap_pixels = int(np.count_nonzero(gaps))
     gap_jobs = []
     for rgb in sorted({tuple(int(v) for v in target[y,x])
@@ -851,10 +871,9 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         engine.stroke_size.select(1)
         mapped = [(left+x0,top+y),(left+x1,top+y)]
         engine.paint.validate_canvas_points(mapped)
-        if x0 == x1:
-            engine.canvas.fill(*mapped[0])
-        else:
-            engine.paint.stroke(mapped,duration=0.008)
+        # Never use the Bucket for a single missing pixel: it can flood
+        # a larger unclosed white area instead of placing a pencil dot.
+        engine.paint.stroke(mapped if x0 != x1 else mapped*2,duration=0.008)
     if gap_jobs:
         shot = pg.screenshot()
         actual = np.asarray(shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
