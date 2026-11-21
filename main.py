@@ -803,6 +803,69 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         print('BLACK GAP FINISH DISABLED: unsafe contour-following repair was removed; '
               'no finishing mouse actions will be performed.',flush=True)
         black_gap_stats['disabled_reason'] = 'Unsafe contour-following repair disabled'
+    # Mandatory one-pixel seam repair: a white pixel between painted
+    # neighbors is never delegated to Paint's bucket tool.
+    import pyautogui as pg
+    sx,sy = engine.paint.point(left,top)
+    shot = pg.screenshot()
+    if sx < 0 or sy < 0 or sx+w > shot.width or sy+h > shot.height:
+        raise RuntimeError('Gap inspection crop outside display')
+    actual = np.asarray(shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+    target = cv2.cvtColor(source,cv2.COLOR_BGR2RGB)
+    white = np.all(actual >= 248,axis=2)
+    expected_ink = np.any(target < 248,axis=2)
+    painted = ~white
+    # Detect single-cell white seams enclosed horizontally or vertically
+    # by already-painted cells. Do not modify intentional source white.
+    surrounded_h = np.zeros((h,w),bool)
+    surrounded_v = np.zeros((h,w),bool)
+    surrounded_h[:,1:-1] = painted[:,:-2] & painted[:,2:]
+    surrounded_v[1:-1,:] = painted[:-2,:] & painted[2:,:]
+    gaps = white & expected_ink & (surrounded_h | surrounded_v)
+    gap_pixels = int(np.count_nonzero(gaps))
+    gap_jobs = []
+    for rgb in sorted({tuple(int(v) for v in target[y,x])
+                       for y,x in zip(*np.where(gaps))}):
+        color_mask = gaps & np.all(target == np.asarray(rgb,np.uint8),axis=2)
+        for y in range(h):
+            xs = np.flatnonzero(color_mask[y])
+            if len(xs):
+                for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1):
+                    gap_jobs.append((rgb,int(y),int(run[0]),int(run[-1])))
+    gap_limit = 1500
+    print(f'ONE-PIXEL GAP CHECK: {gap_pixels} pixels, '
+          f'{len(gap_jobs)} pencil strokes (limit={gap_limit})',flush=True)
+    if len(gap_jobs) > gap_limit:
+        raise RuntimeError(
+            f'Unresolved white seams: {gap_pixels} pixels need '
+            f'{len(gap_jobs)} strokes, exceeding safe limit {gap_limit}. '
+            'Refusing to report drawing as complete.')
+    for rgb,y,x0,x1 in gap_jobs:
+        check_cancel()
+        if rgb != previous_rgb:
+            engine.colors.select_rgb(rgb)
+            previous_rgb = rgb
+            color_switches += 1
+        engine.tools.select('pencil')
+        engine.stroke_size.select(1)
+        mapped = [(left+x0,top+y),(left+x1,top+y)]
+        engine.paint.validate_canvas_points(mapped)
+        if x0 == x1:
+            engine.canvas.fill(*mapped[0])
+        else:
+            engine.paint.stroke(mapped,duration=0.008)
+    if gap_jobs:
+        shot = pg.screenshot()
+        actual = np.asarray(shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+        remaining = int(np.count_nonzero(
+            gaps & np.all(actual >= 248,axis=2)))
+        print(f'ONE-PIXEL GAP VERIFY: {remaining} unresolved pixels',flush=True)
+        if remaining:
+            raise RuntimeError(
+                f'One-pixel seam verification failed: {remaining} white '
+                'pixels remain; drawing not accepted as complete.')
+    repaired = gap_pixels
+    repair_strokes = len(gap_jobs)
     report = compare_paint_canvas(engine.paint,output/'expected.png',
                                   w,h,left,top,output=output,tolerance=0)
     report['test'] = 'full dog: color boundaries separate from black source-pixel ink'
@@ -829,7 +892,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     report['white_gap_repair_attempted_pixels'] = repaired
     report['white_gap_repair_strokes'] = repair_strokes
     report['white_gap_skipped_pixels'] = skipped
-    report['repair_method'] = 'direct pencil for narrow regions; bucket for broad regions; no intermediate screenshots'
+    report['repair_method'] = 'mandatory screenshot-based one-pixel white seam detection, source-color pencil strokes, and verification'
     report['elapsed_seconds'] = round(time.perf_counter()-started,3)
     report['startup_timing'] = startup_timings
     report['pixel_finish'] = finish_stats
