@@ -1130,7 +1130,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     report['black_ink_method'] = 'single black source-mask raster pass; no black buckets or double contours'
     report['black_ink_planned_runs'] = black_planned
     report['black_ink_completed_runs'] = black_strokes
-    report['black_ink_safety_limit'] = black_budget
+    report['black_ink_safety_limit'] = 0  # Final black Pencil pass is disabled
     report['thick_outline_min_area'] = None
     report['thin_regions'] = len(details)
     report['narrow_pencil_regions'] = len(narrow_regions)
