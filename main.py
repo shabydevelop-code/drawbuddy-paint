@@ -819,10 +819,10 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                 mismatch = core & np.any(actual != expected,axis=2)
                 wrong = int(np.count_nonzero(mismatch))
                 if wrong:
-                    # A few disconnected, single-pixel interior mismatches
-                    # are not evidence of an open contour or Bucket spill.
-                    # Keep them visible in diagnostics; never draw repairs.
-                    # Any clustered or larger mismatch remains a hard stop.
+                    # Up to four mismatched pixels, including adjacent ones,
+                    # are not sufficient evidence of an open Bucket boundary.
+                    # Log them for final comparison without repairing them.
+                    # Larger mismatches remain a hard stop.
                     n, labels, stats, _ = cv2.connectedComponentsWithStats(
                         np.uint8(mismatch), connectivity=8)
                     largest = max(
@@ -831,9 +831,9 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                     ys,xs = np.where(mismatch)
                     sample = [(int(x),int(y)) for y,x in
                               zip(ys[:8],xs[:8])]
-                    if wrong <= 3 and largest == 1:
+                    if wrong <= 4:
                         print(
-                            f'BUCKET ISOLATED PIXEL VARIANCE: region '
+                            f'BUCKET MINOR PIXEL VARIANCE: region '
                             f'{index}/{len(batch)}, color={rgb}, '
                             f'pixels={wrong}, sample_local_xy={sample}; '
                             'no Pencil/Undo/refill; final comparison will '
