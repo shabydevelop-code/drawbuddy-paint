@@ -924,6 +924,60 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
                          black_gap_finish,black_gap_limit,logs=logs,output_dir=output_dir)
 
 
+
+def compare_preprocessing(source_path, colors_limit):
+    """Diagnostic only: compare resized input and quantized warm-color contours."""
+    import cv2
+    import numpy as np
+    from PIL import Image
+    image = cv2.imread(str(source_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError(f'Cannot read source image: {source_path}')
+    h, w = image.shape[:2]
+    scale = min(1.0, 550 / w, 500 / h)
+    if scale < 1.0:
+        image = cv2.resize(image, (max(1, int(w * scale)), max(1, int(h * scale))),
+                           interpolation=cv2.INTER_AREA)
+    resized = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    black = np.all(resized == (0, 0, 0), axis=2)
+    white = np.all(resized == (255, 255, 255), axis=2)
+    palette_size = colors_limit - int(black.any()) - int(white.any())
+    if palette_size < 1:
+        raise ValueError('Insufficient palette for comparison')
+    quantized = np.asarray(Image.fromarray(resized, 'RGB').quantize(
+        colors=palette_size, method=Image.Quantize.MEDIANCUT,
+        dither=Image.Dither.NONE).convert('RGB')).copy()
+    quantized[black] = (0, 0, 0)
+    quantized[white] = (255, 255, 255)
+    lightest = quantized.min(axis=2).astype(np.int16)
+    chroma = quantized.max(axis=2).astype(np.int16) - lightest
+    candidate = np.uint8((lightest >= 210) & (chroma <= 18))
+    _, labels = cv2.connectedComponents(candidate, connectivity=8)
+    border_ids = np.unique(np.concatenate(
+        (labels[0, :], labels[-1, :], labels[:, 0], labels[:, -1])))
+    quantized[np.isin(labels, border_ids[border_ids != 0])] = (255, 255, 255)
+    def overlay(rgb):
+        hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+        mask = np.uint8((hsv[:, :, 0] >= 3) & (hsv[:, :, 0] <= 25) &
+                        (hsv[:, :, 1] >= 65) & (hsv[:, :, 2] >= 35)) * 255
+        contours, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        canvas = rgb.copy()
+        cv2.drawContours(canvas, contours, -1, (0, 255, 255), 1)
+        return canvas, len(contours)
+    left, before = overlay(resized)
+    right, after = overlay(quantized)
+    output = Path('output')
+    output.mkdir(parents=True, exist_ok=True)
+    for name, rgb in [('resized-preview.png', resized),
+                      ('quantized-preview.png', quantized),
+                      ('contour-comparison.png', np.concatenate((left, right), axis=1))]:
+        path = output / name
+        if not cv2.imwrite(str(path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)):
+            raise RuntimeError(f'Cannot write {path}')
+    print(f'CONTOUR COMPARISON: output/contour-comparison.png '
+          f'(left=resized only, right=quantized); warm contours {before} -> {after}', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Draw a source image in Microsoft Paint using Pencil contours and Bucket fills.')
     parser.add_argument('--source-image', type=Path, required=True,
@@ -932,6 +986,8 @@ def main():
                         help='Maximum palette colors after Median Cut (default: 50, range: 2..256)')
     parser.add_argument('--speed', type=float, default=20,
                         help='Drawing speed multiplier (0..100)')
+    parser.add_argument('--compare-preprocessing', action='store_true',
+                        help='Compare resized versus quantized contours without Paint')
     parser.add_argument('--preview-only', action='store_true',
                         help='Save resized and quantized preview to output/preview.png; do not launch Paint')
     parser.add_argument('--logs', action='store_true',
@@ -941,6 +997,9 @@ def main():
         parser.error('--speed must be greater than 0 and at most 100')
     if not 2 <= args.colors <= 256:
         parser.error('--colors must be between 2 and 256')
+    if args.compare_preprocessing:
+        compare_preprocessing(args.source_image, args.colors)
+        return
     output_dir = None
     if args.logs and not args.preview_only:
         output_dir = Path('output') / datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
