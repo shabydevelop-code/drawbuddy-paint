@@ -566,6 +566,74 @@ def draw_full_dog_bucket(plan_path, speed):
     completed = 0
     color_switches = 0
     previous_rgb = None
+    # Paint each region completely before moving to the next color.
+    # Screenshot the local rectangle only, and repair narrow white gaps
+    # inside that region while its original RGB is still selected.
+    import pyautogui as pg
+    repaired = 0
+    repair_strokes = 0
+    skipped = 0
+    def finish_region(region, rgb):
+        nonlocal repaired, repair_strokes, skipped
+        contour = np.asarray(region['paths'][0],np.int32)
+        x,y,bw,bh = cv2.boundingRect(contour)
+        pad = 2
+        x0,y0 = max(0,x-pad),max(0,y-pad)
+        x1,y1 = min(w,x+bw+pad),min(h,y+bh+pad)
+        local_mask = np.zeros((y1-y0,x1-x0),np.uint8)
+        shifted = contour - np.array([x0,y0],np.int32)
+        cv2.fillPoly(local_mask,[shifted],255)
+        # Compare only pixels belonging to the requested RGB. This prevents
+        # a repair from erasing dark outlines or painting neighboring colors.
+        expected_rgb = np.asarray(rgb,np.uint8)
+        local_target = cv2.cvtColor(source[y0:y1,x0:x1],cv2.COLOR_BGR2RGB)
+        local_mask &= np.uint8(np.all(local_target == expected_rgb,axis=2))*255
+        engine.paint.refresh_display()
+        sx,sy = engine.paint.point(left+x0,top+y0)
+        shot = pg.screenshot()
+        if sx < 0 or sy < 0 or sx+x1-x0 > shot.width or sy+y1-y0 > shot.height:
+            raise RuntimeError('Region repair screenshot crop outside screen')
+        actual = np.asarray(shot.crop((sx,sy,sx+x1-x0,sy+y1-y0)).convert('RGB'))
+        missing = np.uint8((local_mask != 0) & np.all(actual >= 245,axis=2))
+        count,labels,stats,_ = cv2.connectedComponentsWithStats(missing,8)
+        paths = []
+        for idx in range(1,count):
+            area = int(stats[idx,cv2.CC_STAT_AREA])
+            component = np.uint8(labels == idx)
+            if area > 350 or cv2.distanceTransform(component,cv2.DIST_L2,3).max() > 3.5:
+                skipped += area
+                continue
+            yy,xx = np.where(component)
+            remaining = set(zip(xx.tolist(),yy.tolist()))
+            while remaining:
+                first = min(remaining,key=lambda p:(p[1],p[0]))
+                remaining.remove(first)
+                path = [first]
+                while True:
+                    cx,cy = path[-1]
+                    neighbors = [(cx+dx,cy+dy) for dx,dy in
+                                 ((1,0),(0,1),(-1,0),(0,-1),(1,1),(-1,1),(1,-1),(-1,-1))
+                                 if (cx+dx,cy+dy) in remaining]
+                    if not neighbors:
+                        break
+                    nxt = neighbors[0]
+                    remaining.remove(nxt)
+                    path.append(nxt)
+                paths.append(path)
+        if paths:
+            engine.tools.select('pencil')
+            for path in paths:
+                check_cancel()
+                mapped = [(left+x0+px,top+y0+py) for px,py in path]
+                engine.paint.validate_canvas_points(mapped)
+                if len(mapped) == 1:
+                    engine.canvas.fill(*mapped[0])
+                else:
+                    engine.paint.stroke(mapped,duration=0.008)
+                repaired += len(path)
+                repair_strokes += 1
+        return len(paths)
+
     for region in regions:
         check_cancel()
         rgb = region['rgb']
@@ -583,6 +651,9 @@ def draw_full_dog_bucket(plan_path, speed):
         engine.paint.validate_canvas_points([fill_point])
         engine.tools.select('bucket')
         engine.canvas.fill(*fill_point)
+        local_repairs = finish_region(region, rgb)
+        if local_repairs:
+            print(f'  Region {completed+1}: repaired {local_repairs} narrow white-gap strokes')
         completed += 1
         if completed % 50 == 0:
             print(f'  Fills: {completed}/{len(regions)}, color switches={color_switches}')
@@ -610,72 +681,6 @@ def draw_full_dog_bucket(plan_path, speed):
             engine.paint.stroke(mapped,duration=0.012)
         if i % 50 == 0:
             print(f'  Details: {i}/{len(details)}')
-    # Repair narrow WHITE gaps based on the actual Paint screenshot.
-    # Never repaint dark outlines or broad regions with uncertain boundaries.
-    import pyautogui as pg
-    engine.paint.refresh_display()
-    sx,sy = engine.paint.point(left,top)
-    shot = pg.screenshot()
-    if sx < 0 or sy < 0 or sx+w > shot.width or sy+h > shot.height:
-        raise RuntimeError('Repair screenshot crop outside screen')
-    actual = np.asarray(shot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
-    target = cv2.cvtColor(source,cv2.COLOR_BGR2RGB)
-    missing = np.uint8(np.all(actual >= 245,axis=2) &
-                       np.any(target < 235,axis=2) &
-                       (np.max(target,axis=2) >= 70))
-    n,labels,stats,_ = cv2.connectedComponentsWithStats(missing,8)
-    repairs = []
-    skipped = 0
-    for idx in range(1,n):
-        area = int(stats[idx,cv2.CC_STAT_AREA])
-        component = np.uint8(labels == idx)
-        if area > 350 or cv2.distanceTransform(component,cv2.DIST_L2,3).max() > 3.5:
-            skipped += area
-            continue
-        yy,xx = np.where(component)
-        remaining = set(zip(xx.tolist(),yy.tolist()))
-        while remaining:
-            start = min(remaining,key=lambda p:(p[1],p[0]))
-            remaining.remove(start)
-            path = [start]
-            while True:
-                x,y = path[-1]
-                next_points = [(x+dx,y+dy) for dx,dy in
-                               ((1,0),(0,1),(-1,0),(0,-1),(1,1),(-1,1),(1,-1),(-1,-1))
-                               if (x+dx,y+dy) in remaining]
-                if not next_points:
-                    break
-                nxt = next_points[0]
-                remaining.remove(nxt)
-                path.append(nxt)
-            color = None
-            run = []
-            for x,y in path:
-                rgb = tuple(int(v) for v in target[y,x])
-                if run and rgb != color:
-                    repairs.append((color,run))
-                    run = []
-                color = rgb
-                run.append((x,y))
-            if run:
-                repairs.append((color,run))
-    repairs.sort(key=lambda p:p[0])
-    repaired = 0
-    for rgb,path in repairs:
-        check_cancel()
-        if rgb != previous_rgb:
-            engine.colors.select_rgb(rgb)
-            previous_rgb = rgb
-            color_switches += 1
-        engine.tools.select('pencil')
-        mapped = [(left+x,top+y) for x,y in path]
-        engine.paint.validate_canvas_points(mapped)
-        if len(mapped) == 1:
-            engine.canvas.fill(*mapped[0])
-        else:
-            engine.paint.stroke(mapped,duration=0.008)
-        repaired += len(path)
-    print(f'WHITE GAP REPAIR: attempted {repaired} pixels in {len(repairs)} strokes; skipped {skipped} unsafe pixels')
     engine.paint.refresh_display()
     report = compare_paint_canvas(engine.paint,output/'expected.png',
                                   w,h,left,top,output=output,tolerance=0)
@@ -686,7 +691,7 @@ def draw_full_dog_bucket(plan_path, speed):
     report['omitted_tiny_pixels'] = omitted_pixels
     report['color_switches'] = color_switches
     report['white_gap_repair_attempted_pixels'] = repaired
-    report['white_gap_repair_strokes'] = len(repairs)
+    report['white_gap_repair_strokes'] = repair_strokes
     report['white_gap_skipped_pixels'] = skipped
     report['elapsed_seconds'] = round(time.perf_counter()-started,3)
     (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
