@@ -506,6 +506,90 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         occupied[mask != 0] = 1
         source[mask != 0] = rgb[::-1]
         groups.append((rgb,mask))
+    # Exact shared-cell coverage: every nonwhite source pixel is owned by
+    # exactly one pencil path. No double contours, no bucket, no clipboard.
+    # Merge identical horizontal runs on consecutive rows into a single
+    # serpentine mouse stroke, keeping every segment within source color.
+    jobs = []
+    for rgb,mask in groups:
+        active = {}
+        for y in range(h):
+            xs = np.flatnonzero(mask[y])
+            runs = []
+            if len(xs):
+                runs = [(int(run[0]),int(run[-1]))
+                        for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1)]
+            current = set(runs)
+            for key in list(active):
+                if key not in current:
+                    jobs.append((rgb,active.pop(key)))
+            for x0,x1 in runs:
+                key = (x0,x1)
+                if key not in active:
+                    active[key] = [(x0,y),(x1,y)]
+                else:
+                    path = active[key]
+                    if len(path) >= 300:
+                        jobs.append((rgb,path))
+                        active[key] = [(x0,y),(x1,y)]
+                    elif path[-1][0] == x1:
+                        path.extend([(x1,y),(x0,y)])
+                    else:
+                        path.extend([(x0,y),(x1,y)])
+        for path in active.values():
+            jobs.append((rgb,path))
+    # Simulate all pencil segments at source resolution before Paint opens.
+    planned = np.full((h,w,3),255,np.uint8)
+    for rgb,path in jobs:
+        color = rgb[::-1]
+        for p0,p1 in zip(path,path[1:]):
+            cv2.line(planned,p0,p1,color,1,cv2.LINE_8)
+        if len(path) == 1:
+            x,y = path[0]
+            planned[y,x] = color
+    mismatched = int(np.count_nonzero(np.any(planned != source,axis=2)))
+    output = Path('output/comparison/full-dog-bucket')
+    output.mkdir(parents=True,exist_ok=True)
+    cv2.imwrite(str(output/'expected.png'),source)
+    cv2.imwrite(str(output/'planned.png'),planned)
+    max_strokes = 7000
+    print(f'SHARED-CELL PREFLIGHT: {len(jobs)} pencil strokes, '
+          f'{mismatched} incorrect planned pixels, limit={max_strokes}',flush=True)
+    if mismatched or len(jobs) > max_strokes:
+        raise RuntimeError(
+            f'Unsafe drawing plan: {mismatched} mismatched pixels, '
+            f'{len(jobs)} strokes (limit {max_strokes}). Paint not opened.')
+    from drawbuddy.controller import check_cancel
+    engine = DrawingEngine(speed=speed)
+    engine.tools.select('pencil')
+    engine.stroke_size.select(1)
+    left,top = 250+(500-w)//2,155+(547-h)//2
+    last_rgb = None
+    for index,(rgb,path) in enumerate(sorted(jobs,key=lambda j:j[0]),1):
+        check_cancel()
+        if rgb != last_rgb:
+            engine.colors.select_rgb(rgb)
+            last_rgb = rgb
+        mapped = [(left+x,top+y) for x,y in path]
+        engine.paint.validate_canvas_points(mapped)
+        if len(mapped) == 1 or mapped[0] == mapped[-1] and len(mapped)==2:
+            engine.canvas.fill(*mapped[0])
+        else:
+            engine.paint.stroke(mapped,duration=0.008)
+        if index % 200 == 0:
+            print(f'SHARED-CELL DRAW: {index}/{len(jobs)}',flush=True)
+    report = compare_paint_canvas(engine.paint,output/'expected.png',
+                                  w,h,left,top,output=output,tolerance=0)
+    report['test'] = 'exact shared-cell pencil coverage without contours or bucket'
+    report['planned_strokes'] = len(jobs)
+    report['planned_wrong_pixels'] = mismatched
+    (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+    print(f'SHARED-CELL RESULT: {report["error_pixels"]} pixel errors',flush=True)
+    if report['error_pixels']:
+        raise RuntimeError(
+            f'Drawing verification failed: {report["error_pixels"]} pixels '
+            'differ from source. See output/comparison/full-dog-bucket.')
+    return
     # Include the implicit white pixels so enclosed white regions can be
     # recovered by the contour/bucket planner when necessary.
     white_mask = np.uint8(occupied == 0)*255
