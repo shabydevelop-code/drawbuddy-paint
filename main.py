@@ -591,6 +591,7 @@ def draw_full_dog_bucket(plan_path, speed):
     (output/'startup-timing.json').write_text(json.dumps(startup_timings,indent=2),encoding='utf-8')
     started = time.perf_counter()
     completed = 0
+    thick_outline_regions = 0
     color_switches = 0
     previous_rgb = None
     # Do not retrace filled region boundaries: it thickens and pixelates edges.
@@ -606,6 +607,12 @@ def draw_full_dog_bucket(plan_path, speed):
             previous_rgb = rgb
             color_switches += 1
         engine.tools.select('pencil')
+        # Controlled trial: Paint size preset 2 only for broad, nonblack
+        # color regions. Keep black outlines and small details at size 1.
+        thick_outline = region['area'] >= 1000 and rgb not in ((0,0,0),(255,255,255))
+        engine.stroke_size.select(2 if thick_outline else 1)
+        if thick_outline:
+            thick_outline_regions += 1
         for path in region['paths']:
             mapped = [(left+x,top+y) for x,y in path]
             engine.paint.validate_canvas_points(mapped)
@@ -618,6 +625,7 @@ def draw_full_dog_bucket(plan_path, speed):
         completed += 1
         if completed % 50 == 0:
             print(f'  Fills: {completed}/{len(regions)}, color switches={color_switches}')
+    engine.stroke_size.select(1)
     # Fine details are never bucket-filled. Trace each contour once and
     # simplify mildly to avoid repeated jitter around individual pixels.
     for i,detail in enumerate(details,1):
@@ -645,6 +653,9 @@ def draw_full_dog_bucket(plan_path, speed):
     report['test'] = 'full dog: broad fills followed by thin details and black lines'
     report['region_count'] = len(regions)
     report['completed_regions'] = completed
+    report['thick_outline_regions'] = thick_outline_regions
+    report['thick_outline_size_preset'] = 2
+    report['thick_outline_min_area'] = 1000
     report['thin_regions'] = len(details)
     report['omitted_tiny_pixels'] = omitted_pixels
     report['color_switches'] = color_switches
