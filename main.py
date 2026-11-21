@@ -680,45 +680,66 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         points = [tuple(map(int,p[0])) for p in contour]
         if len(points) > 1:
             draw_contour_path(points+[points[0]],outline_rgb)
-    print(f'DRAW STAGE 2/3: INNER CONTOURS ({len(regions)})',flush=True)
-    # Paint's one-pixel pencil stroke is centered on each component's
-    # boundary pixel. Independent neighboring contours can consequently
-    # leave a one-pixel white seam between their painted footprints.
-    # Overlap broad COLOR boundaries by one Paint pixel during the contour
-    # stage, rather than raster-printing or repairing the entire image.
-    # Preserve single-pixel dark ink contours and tiny details.
+    # Color-batched region completion. Each region is outlined, filled,
+    # and checked before the next region begins. No all-contours-first pass
+    # that leaves unfinished regions across the canvas.
+    import pyautogui as pg
+    color_batches = {}
     for region in regions:
-        check_cancel()
-        rgb = region['rgb']
-        is_ink = max(rgb) <= 24
-        for path in region['paths']:
-            if rgb != previous_rgb:
-                engine.colors.select_rgb(rgb)
-                previous_rgb = rgb
-                color_switches += 1
-            engine.tools.select('pencil')
-            engine.stroke_size.select(1 if is_ink else 2)
-            mapped = [(left+x,top+y) for x,y in path]
-            engine.paint.validate_canvas_points(mapped)
-            engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,duration=0.012)
-    engine.stroke_size.select(1)
-    print(f'DRAW STAGE 3/3: BUCKET FILLS ({len(regions)})',flush=True)
-    for region in regions:
-        check_cancel()
-        rgb = region['rgb']
+        color_batches.setdefault(region['rgb'],[]).append(region)
+    # White islands are processed last among light colors, while dark ink
+    # is restored after all bucket operations.
+    batch_order = sorted(color_batches,
+                         key=lambda rgb:(rgb == (255,255,255),
+                                         -sum(r['area'] for r in color_batches[rgb])))
+    print(f'DRAW STAGE 2/3: COMPLETE REGIONS BY COLOR '
+          f'({len(batch_order)} colors, {len(regions)} regions)',flush=True)
+    for rgb in batch_order:
+        batch = sorted(color_batches[rgb],key=lambda region:-region['area'])
         if rgb != previous_rgb:
             engine.colors.select_rgb(rgb)
             previous_rgb = rgb
             color_switches += 1
-        # Boundaries were drawn in stage 2; fill only in this stage.
-        seed = region['seed']
-        fill_point = (left+seed[0],top+seed[1])
-        engine.paint.validate_canvas_points([fill_point])
-        engine.tools.select('bucket')
-        engine.canvas.fill(*fill_point)
-        completed += 1
-        if completed % 50 == 0:
-            print(f'  Fills: {completed}/{len(regions)}, color switches={color_switches}')
+        print(f'COLOR BATCH {rgb}: {len(batch)} regions',flush=True)
+        for index,region in enumerate(batch,1):
+            check_cancel()
+            engine.tools.select('pencil')
+            engine.stroke_size.select(1)
+            for path in region['paths']:
+                mapped = [(left+x,top+y) for x,y in path]
+                engine.paint.validate_canvas_points(mapped)
+                engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
+                                    duration=0.012)
+            seed = region['seed']
+            fill_point = (left+seed[0],top+seed[1])
+            engine.paint.validate_canvas_points([fill_point])
+            engine.tools.select('bucket')
+            engine.canvas.fill(*fill_point)
+            # Verify the region's interior, not its edge (the latter may
+            # legitimately be repainted by a later neighboring region).
+            core = cv2.erode(region['mask'],
+                             np.ones((3,3),np.uint8)) != 0
+            if np.any(core):
+                sx,sy = engine.paint.point(left,top)
+                screenshot = pg.screenshot()
+                if sx < 0 or sy < 0 or sx+w > screenshot.width or sy+h > screenshot.height:
+                    raise RuntimeError('Region verification crop outside display')
+                actual = np.asarray(
+                    screenshot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+                expected = np.asarray(rgb,dtype=np.uint8)
+                # A final ink pass may overlay some boundary pixels, but
+                # a filled region's interior must already match its color.
+                wrong = int(np.count_nonzero(
+                    core & np.any(actual != expected,axis=2)))
+                if wrong:
+                    raise RuntimeError(
+                        f'Incomplete region {index}/{len(batch)} '
+                        f'for color {rgb}: {wrong} interior pixels differ. '
+                        'Stopped before advancing to the next region.')
+            completed += 1
+            print(f'  REGION COMPLETE {index}/{len(batch)} '
+                  f'color={rgb}',flush=True)
+    print('DRAW STAGE 3/3: FINAL DETAILS AND VERIFICATION',flush=True)
     # No row-run fallback: nested areas are handled by layer ordering.
     # Exact-color fallback for the rejected regions, after safe bucket fills.
     fallback_completed = 0
