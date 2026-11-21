@@ -1696,32 +1696,6 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
                          black_gap_finish,black_gap_limit)
 
 
-def build_house_reference():
-    """Build the canonical house test image, not a separate Paint renderer."""
-    import cv2
-    import numpy as np
-    image = np.full((330,430,3),255,np.uint8)
-    def polygon(vertices,rgb):
-        bgr = tuple(reversed(rgb))
-        cv2.fillPoly(image,[np.asarray(vertices,np.int32)],bgr)
-        cv2.polylines(image,[np.asarray(vertices,np.int32)],True,(0,0,0),1,
-                      lineType=cv2.LINE_8)
-    polygon([(285,38),(314,38),(314,103),(285,103)],(177,85,67))
-    polygon([(100,121),(330,121),(330,290),(100,290)],(247,224,177))
-    polygon([(77,121),(215,25),(353,121)],(195,52,48))
-    polygon([(189,290),(241,290),(270,325),(160,325)],(204,192,168))
-    polygon([(185,207),(245,207),(245,290),(185,290)],(129,79,48))
-    polygon([(123,162),(172,162),(172,207),(123,207)],(90,175,219))
-    polygon([(258,162),(307,162),(307,207),(258,207)],(90,175,219))
-    cv2.circle(image,(234,252),2,(91,202,242),-1,lineType=cv2.LINE_8)
-    output = Path('output/house')
-    output.mkdir(parents=True,exist_ok=True)
-    path = output/'reference.png'
-    if not cv2.imwrite(str(path),image):
-        raise RuntimeError('Could not write house reference')
-    return path
-
-
 def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
     parser.add_argument('--paint-plan', type=Path, help='Validate or draw a 16-color pixel stroke plan')
@@ -1770,7 +1744,7 @@ def main():
         speed = args.speed if args.speed is not None else 20
         if not math.isfinite(speed) or not 0 < speed <= 100:
             parser.error('Invalid drawing speed')
-        source = build_house_reference() if args.house else args.source_image
+        source = Path('assets/house-reference.png') if args.house else args.source_image
         draw_source_image(source,float(speed),args.pixel_perfect_finish,
                           args.pixel_finish_limit,args.black_gap_finish,
                           args.black_gap_limit)
