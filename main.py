@@ -1351,16 +1351,29 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
             color_switches += 1
         engine.tools.select('pencil')
         engine.stroke_size.select(1)
-        for y in np.flatnonzero(np.any(missing_ink,axis=1)):
-            xs = np.flatnonzero(missing_ink[y])
-            for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1):
-                check_cancel()
-                mapped = [(left+int(run[0]),top+int(y)),
-                          (left+int(run[-1]),top+int(y))]
+        # Trace connected missing-ink contours, not scanline printer runs.
+        # Restrict every stroke to source-defined dark pixels and retain
+        # continuous paths for the Paint Pencil tool.
+        missing_u8 = np.uint8(missing_ink)*255
+        count,labels,stats,_ = cv2.connectedComponentsWithStats(missing_u8,8)
+        for component_id in sorted(range(1,count),
+                                   key=lambda i:-int(stats[i,cv2.CC_STAT_AREA])):
+            check_cancel()
+            component = np.uint8(labels == component_id)*255
+            contours,_ = cv2.findContours(component,cv2.RETR_LIST,
+                                          cv2.CHAIN_APPROX_NONE)
+            for contour in contours:
+                points = [tuple(map(int,p[0])) for p in contour]
+                if not points:
+                    continue
+                if len(points)>2:
+                    points.append(points[0])
+                mapped = [(left+x,top+y) for x,y in points]
                 engine.paint.validate_canvas_points(mapped)
-                engine.paint.stroke(mapped,duration=0.008)
+                engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
+                                    duration=0.012)
                 black_strokes += 1
-        print(f'INK RESTORATION: {black_strokes} exact-source horizontal Pencil runs',flush=True)
+        print(f'INK RESTORATION: {black_strokes} connected contour Pencil strokes',flush=True)
     # Leave actual/previous_rgb unchanged for the subsequent white layer.
     # Last nested layer: white glints inside black eyes. Keep them after
     # the dark ink pass; do not globally paint white before black.
