@@ -24,7 +24,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     w, h = data.get('width'), data.get('height')
     if (data.get('format') != 'drawbuddy-paint-stroke-plan-v1'
             or not isinstance(w,int) or not isinstance(h,int)
-            or not 1 <= w <= 500 or not 1 <= h <= 547):
+            or not 1 <= w <= 550 or not 1 <= h <= 500):
         raise ValueError('Invalid image stroke plan')
     # White is implicit canvas background. The stroke plan may omit its runs;
     # do not require one explicit group entry for every pixel.
@@ -178,7 +178,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     regions.sort(key=lambda x:-x['area'])
     # Only true black source pixels become black marks; never trace both sides of a thin black component.
     details.sort(key=lambda x:(x['rgb'] == (0,0,0),x['rgb'],-x['area']))
-    left,top = 250+(500-w)//2,155+(547-h)//2
+    left,top = 225+(550-w)//2,155+(500-h)//2
     output = output_dir or Path('output/comparison/image-bucket')
     if logs:
         output.mkdir(parents=True,exist_ok=True)
@@ -807,8 +807,14 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
     if image is None:
         raise ValueError(f'Cannot read source image: {source_path}')
     h,w = image.shape[:2]
-    if not (1 <= w <= 500 and 1 <= h <= 547):
-        raise ValueError('Source must be at most 500x547; no automatic resizing')
+    scale = min(1.0, 550 / w, 500 / h)
+    if scale < 1.0:
+        new_w = max(1, min(550, int(w * scale)))
+        new_h = max(1, min(500, int(h * scale)))
+        image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        print(f'SOURCE RESIZED: {w}x{h} -> {new_w}x{new_h} '
+              '(proportional fit, no cropping)', flush=True)
+        w,h = new_w,new_h
     rgb = cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
     colors,counts = np.unique(rgb.reshape(-1,3),axis=0,return_counts=True)
     groups = []
