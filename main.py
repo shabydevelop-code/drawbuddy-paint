@@ -627,11 +627,29 @@ def draw_full_dog_bucket(plan_path, speed):
             print(f'  Fills: {completed}/{len(regions)}, color switches={color_switches}')
     # All bucket-filled regions have been processed. Narrow ink is drawn
     # directly from source pixels, never from doubled component contours.
-    # Narrow components: pencil-only, no bucket and no repeated boundary tracing.
-    # Draw color islands before the final black linework.
+    # Bounded narrow-region pass: no thousands of single-pixel clicks.
+    # Favor meaningful connected strokes; skip isolated micro-pixels.
     narrow_strokes = 0
-    for item in sorted(narrow_regions,key=lambda q:(q['rgb']==(0,0,0),q['rgb'])):
+    narrow_skipped = 0
+    narrow_budget = 120
+    for item in sorted(narrow_regions,key=lambda q:(q['rgb']==(0,0,0),q['rgb'],-q['area'])):
         check_cancel()
+        if narrow_strokes >= narrow_budget:
+            narrow_skipped += 1
+            continue
+        mask = item['mask']
+        if item['area'] < 8:
+            narrow_skipped += 1
+            continue
+        # One contour path per narrow connected component instead of a
+        # separate mouse action for every horizontal pixel run.
+        contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            continue
+        path = max(contours,key=lambda c:len(c)).reshape(-1,2)
+        if len(path) < 2 or len(path) > 240:
+            narrow_skipped += 1
+            continue
         rgb = item['rgb']
         if rgb != previous_rgb:
             engine.colors.select_rgb(rgb)
@@ -639,21 +657,12 @@ def draw_full_dog_bucket(plan_path, speed):
             color_switches += 1
         engine.tools.select('pencil')
         engine.stroke_size.select(1)
-        mask = item['mask']
-        for y in range(h):
-            xs = np.flatnonzero(mask[y])
-            if not len(xs):
-                continue
-            runs = np.split(xs,np.flatnonzero(np.diff(xs)>1)+1)
-            for run in runs:
-                x0,x1 = int(run[0]),int(run[-1])
-                mapped = [(left+x0,top+y),(left+x1,top+y)]
-                engine.paint.validate_canvas_points(mapped)
-                if x0 == x1:
-                    engine.canvas.fill(*mapped[0])
-                else:
-                    engine.paint.stroke(mapped,duration=0.008)
-                narrow_strokes += 1
+        mapped = [(left+int(x),top+int(y)) for x,y in path]
+        engine.paint.validate_canvas_points(mapped)
+        engine.paint.stroke(mapped,duration=0.008)
+        narrow_strokes += 1
+    print(f'NARROW DETAIL LIMIT: {narrow_strokes}/{narrow_budget} strokes; '
+          f'{narrow_skipped} regions skipped to avoid excessive mouse actions',flush=True)
     engine.stroke_size.select(1)
     # Fine details are never bucket-filled. Trace each contour once and
     # simplify mildly to avoid repeated jitter around individual pixels.
@@ -690,6 +699,8 @@ def draw_full_dog_bucket(plan_path, speed):
     report['thin_regions'] = len(details)
     report['narrow_pencil_regions'] = len(narrow_regions)
     report['narrow_pencil_strokes'] = narrow_strokes
+    report['narrow_pencil_stroke_budget'] = narrow_budget
+    report['narrow_regions_skipped_for_speed'] = narrow_skipped
     report['omitted_tiny_pixels'] = omitted_pixels
     report['color_switches'] = color_switches
     report['white_gap_repair_attempted_pixels'] = repaired
