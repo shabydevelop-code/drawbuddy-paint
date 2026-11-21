@@ -457,6 +457,62 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
 
 
 
+
+def execute_continuous_path_test(path, speed, limit):
+    """Draw actual connected color paths in Paint, without raster runs."""
+    import time
+    data = json.loads(Path(path).read_text(encoding='utf-8'))
+    report = data.get('report', {})
+    width, height = report.get('width'), report.get('height')
+    if (report.get('format') != 'drawbuddy-continuous-path-analysis-v1'
+            or not isinstance(width, int) or not isinstance(height, int)
+            or not 1 <= width <= 500 or not 1 <= height <= 547
+            or not isinstance(data.get('groups'), list)):
+        raise ValueError('Invalid path file. Run python pixel_map.py --analyze-continuous')
+    left, top = 250 + (500 - width)//2, 155 + (547 - height)//2
+    groups = []
+    for group in data['groups']:
+        try:
+            rgb = tuple(bytes.fromhex(group['rgb'].lstrip('#')))
+        except (ValueError, KeyError) as exc:
+            raise ValueError('Invalid RGB color in path file') from exc
+        if len(rgb) != 3:
+            raise ValueError('Invalid RGB color in path file')
+        paths = []
+        for points in group.get('paths', []):
+            if not 12 <= len(points) <= 180:
+                continue
+            if any(not isinstance(p, list) or len(p) != 2
+                   or any(type(v) is not int for v in p)
+                   or not (0 <= p[0] < width and 0 <= p[1] < height)
+                   for p in points):
+                raise ValueError('Invalid continuous path coordinates')
+            if any(abs(a[0]-b[0]) + abs(a[1]-b[1]) != 1
+                   for a, b in zip(points, points[1:])):
+                raise ValueError('Non-adjacent continuous path points')
+            paths.append(points)
+        if len(paths) >= limit:
+            groups.append((rgb, paths))
+    if not groups:
+        raise ValueError(f'No color has {limit} eligible paths of 12-180 points')
+    rgb, paths = max(groups, key=lambda item: sum(map(len, item[1])))
+    selected = sorted(paths, key=len, reverse=True)[:limit]
+    mapped = [[(left+x, top+y) for x,y in points] for points in selected]
+    print(f'CONTINUOUS PAINT TEST: {limit} paths, RGB={rgb}, lengths={[len(p) for p in selected]}')
+    print('Open a NEW blank white maximized Paint canvas. F8 cancels.')
+    engine = DrawingEngine(speed=speed)
+    for points in mapped:
+        engine.paint.validate_canvas_points(points)
+    engine.tools.select('pencil')
+    engine.stroke_size.select(1)
+    engine.colors.select_rgb(rgb)
+    start = time.perf_counter()
+    for i, points in enumerate(mapped, 1):
+        engine.paint.stroke(points, duration=0.012)
+        print(f'Continuous path {i}/{limit} complete')
+    print(f'DONE: {limit} continuous paths in {time.perf_counter()-start:.1f}s; inspect Paint.')
+
+
 def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None, color_test=False, region_test=False, gap_test=False):
     """Validate a 16-color pixel plan; draw only with explicit opt-in.
 
@@ -579,6 +635,8 @@ def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None, color
 def main():
     parser = argparse.ArgumentParser(description='Draw a saved lesson in Microsoft Paint.')
     parser.add_argument('--paint-plan', type=Path, help='Validate or draw a 16-color pixel stroke plan')
+    parser.add_argument('--continuous-paths', type=Path, help='Continuous-path analysis JSON')
+    parser.add_argument('--continuous-path-test', type=int, choices=(1, 20), help='Draw 1 or 20 paths in Paint')
     parser.add_argument('--paint-plan-gap-test', action='store_true', help='Draw only two separated orange strokes to diagnose unwanted connector lines')
     parser.add_argument('--paint-plan-region-test', action='store_true', help='Draw a substantial central 50 percent crop using all its colors')
     parser.add_argument('--paint-plan-color-test', action='store_true', help='Draw 3 strokes from each of 3 different plan colors')
@@ -606,6 +664,16 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
+    if args.continuous_paths is not None or args.continuous_path_test is not None:
+        if args.continuous_paths is None or args.continuous_path_test is None:
+            parser.error('--continuous-paths and --continuous-path-test are both required')
+        if args.paint_plan or args.scene_strokes or args.drawing:
+            parser.error('Continuous path test cannot be combined with another drawing mode')
+        speed = args.speed if args.speed is not None else 20
+        if not isinstance(speed, (int, float)) or not math.isfinite(speed) or not 0 < speed <= 100:
+            parser.error('Invalid drawing speed')
+        execute_continuous_path_test(args.continuous_paths, float(speed), args.continuous_path_test)
+        return
     if args.paint_plan:
         if args.scene_strokes or args.drawing or any((
                 args.region_draw_source, args.region_source, args.centerline_source,
