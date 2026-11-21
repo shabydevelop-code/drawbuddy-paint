@@ -12,7 +12,7 @@ Windows, Microsoft Paint, Python, and Python packages `pyautogui`, `opencv-pytho
 python -u main.py --source-image assets/house-reference.png --speed 50
 ```
 
-Use any supported image path with `--source-image`. The source must be no larger than 500×547 pixels and contain at most 16 exact colors. The engine refuses resizing and palette reduction.
+Use any supported image path with `--source-image`. The source must be no larger than 500×547 pixels and may contain any number of distinct RGB colors. The engine preserves their exact RGB values without palette reduction. More distinct colors may greatly increase planning and drawing time. The engine refuses automatic resizing.
 
 ## Optional logs
 
