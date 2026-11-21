@@ -446,6 +446,14 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     source_rgb = source[:,:,::-1]
     expected_dark = np.all(source_rgb <= 24,axis=2)
     actual_dark = np.all(actual <= 40,axis=2)
+    # Capture ink overdraw before final restoration. This distinguishes
+    # defects introduced by Black Base/color layers from late Pencil work.
+    pre_restoration_extra_dark = int(np.count_nonzero(
+        (~expected_dark) & actual_dark))
+    pre_restoration_missing_dark = int(np.count_nonzero(
+        expected_dark & (~actual_dark)))
+    print(f'INK BEFORE RESTORATION: missing={pre_restoration_missing_dark}, '
+          f'extra={pre_restoration_extra_dark}',flush=True)
     ink_unresolved = int(np.count_nonzero(expected_dark & ~actual_dark))
     black_planned = 0
     black_strokes = 0
@@ -742,6 +750,14 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     report['thick_outline_size_preset'] = 1
     report['black_centerline_components'] = 0
     report['black_ink_method'] = 'source ink contour restoration after color layers'
+    report['ink_before_restoration'] = {
+        'missing_dark_pixels': pre_restoration_missing_dark,
+        'extra_dark_pixels': pre_restoration_extra_dark,
+    }
+    report['ink_after_restoration'] = {
+        'missing_dark_pixels': int(np.count_nonzero(expected_dark & ~actual_dark)),
+        'extra_dark_pixels': int(np.count_nonzero(~expected_dark & actual_dark)),
+    }
     report['black_ink_planned_runs'] = black_planned
     report['black_ink_completed_runs'] = black_strokes
     report['black_ink_safety_limit'] = None  # No arbitrary stroke cap; verify actual Paint pixels
