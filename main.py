@@ -799,7 +799,8 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
 
 
 def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, finish_limit=1500,
-                      black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None):
+                      black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None,
+                      preview_only=False):
     """Convert an exact-RGB image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
@@ -840,6 +841,13 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
     rgb[original_black] = (0, 0, 0)
     rgb[original_white] = (255, 255, 255)
     colors,counts = np.unique(rgb.reshape(-1,3),axis=0,return_counts=True)
+    if preview_only:
+        preview_path = Path('output') / 'preview.png'
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
+        if not cv2.imwrite(str(preview_path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)):
+            raise RuntimeError(f'Could not save preview: {preview_path}')
+        print(f'PREVIEW SAVED: {preview_path} ({w}x{h}, {len(colors)} colors)', flush=True)
+        return
     print(f'COLOR QUANTIZATION: median cut, limit={colors_limit}, '
           f'actual={len(colors)}, preserved black/white={reserved}', flush=True)
     color_seconds = time.perf_counter() - stage_start
@@ -901,6 +909,8 @@ def main():
                         help='Maximum palette colors after Median Cut (default: 50, range: 2..256)')
     parser.add_argument('--speed', type=float, default=20,
                         help='Drawing speed multiplier (0..100)')
+    parser.add_argument('--preview-only', action='store_true',
+                        help='Save resized and quantized preview to output/preview.png; do not launch Paint')
     parser.add_argument('--logs', action='store_true',
                         help='Save diagnostics in a unique output directory (off by default)')
     args = parser.parse_args()
@@ -909,12 +919,12 @@ def main():
     if not 2 <= args.colors <= 256:
         parser.error('--colors must be between 2 and 256')
     output_dir = None
-    if args.logs:
+    if args.logs and not args.preview_only:
         output_dir = Path('output') / datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
         output_dir.mkdir(parents=True, exist_ok=False)
         print(f'LOG DIRECTORY: {output_dir}', flush=True)
     draw_source_image(args.source_image, args.speed, colors_limit=args.colors, logs=args.logs,
-                      output_dir=output_dir)
+                      output_dir=output_dir, preview_only=args.preview_only)
 
 
 if __name__ == '__main__':
