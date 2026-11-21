@@ -44,8 +44,7 @@ The plan uses image-derived colors and therefore approximates a reference with m
 - `main.py`: entry point and established contour/Bucket implementation.
 - `pixel_map.py`: pixel-map and 16-color plan generation.
 - `drawbuddy/`: Paint mouse controller, drawing components, and legacy experimental painters.
-- `output/`: locally regenerated plans, previews, comparisons and diagnostic captures.
-- `diagnostics/latest/`: Git-tracked diagnostic snapshots, retained for remote review.
+- `output/`: locally regenerated plans, previews, comparisons and diagnostic captures (not committed).
 - `AGENTS.md`: mandatory drawing and fidelity rules.
 
 The entry point now exposes only `--house`, `--source-image`, and `--image-bucket`. Legacy experimental modules remain in the repository pending dependency verification; they are not invoked by these modes. Do not treat offline expected images as proof of Paint execution.
