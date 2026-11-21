@@ -551,6 +551,31 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             pts = [tuple(map(int,p[0])) for p in contour]
             pts.append(pts[0])
             regions.append({'area':area,'rgb':rgb,'paths':[pts],'seed':seed})
+    # Pixel-level plan verification: a closed contour alone is not proof
+    # that Paint bucket will cover the component. Simulate each region mask
+    # and reject unsafe bucket plans before any UI operation.
+    safe_regions = []
+    unsafe_regions = []
+    for region in regions:
+        pts = np.asarray(region['paths'][0],dtype=np.int32).reshape(-1,1,2)
+        footprint = np.zeros((h,w),np.uint8)
+        cv2.drawContours(footprint,[pts],-1,255,thickness=cv2.FILLED)
+        rgb = region['rgb']
+        intended = np.all(source == np.asarray(rgb[::-1],np.uint8),axis=2)
+        # A bucket must not cover a pixel assigned to a different color.
+        extra = int(np.count_nonzero((footprint != 0) & ~intended))
+        if extra:
+            unsafe_regions.append((region,extra))
+        else:
+            safe_regions.append(region)
+    regions = safe_regions
+    print(f'BUCKET PREFLIGHT: {len(safe_regions)} safe regions, '
+          f'{len(unsafe_regions)} rejected for crossing source colors',flush=True)
+    if unsafe_regions:
+        # Fail closed rather than produce a misleading partial picture.
+        raise RuntimeError(
+            f'Unsafe contour/bucket plan: {len(unsafe_regions)} regions cross '
+            'source color boundaries. Drawing aborted before opening Paint.')
     def tier(area):
         if area >= 1000: return 0
         if area >= 100: return 1
