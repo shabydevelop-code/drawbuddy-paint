@@ -512,8 +512,8 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     groups.append(((255,255,255),white_mask))
     mask_seconds = time.perf_counter() - stage_clock
     stage_clock = time.perf_counter()
-    # Stage 1: paint broad color surfaces. Stage 2: draw fine black
-    # features LAST, so feet/toe lines are never covered by later fills.
+    # Stage 1: paint broad color surfaces. Stage 2: draw black
+    # source pixels LAST, so feet/toe lines are never covered by later fills.
     regions = []
     details = []
     omitted_pixels = 0
@@ -534,18 +534,9 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             _,radius,_,seed = cv2.minMaxLoc(dist)
             is_black = rgb == (0,0,0)
             if is_black:
-                # Geometry, not area alone: a long black ribbon is ink, not
-                # a closed bucket surface. Keep compact eyes/nose bucketed.
-                bw = int(stats[idx,cv2.CC_STAT_WIDTH])
-                bh = int(stats[idx,cv2.CC_STAT_HEIGHT])
-                elongation = max(bw,bh)/max(1,min(bw,bh))
-                ribbon = (radius < 2.5 or area < 30 or
-                          (elongation >= 2.5 and radius < 6.0))
-                if ribbon:
-                    if area >= 2:
-                        narrow_regions.append({'rgb':rgb,'area':area,
-                                               'mask':component,'ribbon':True})
-                    continue
+                # Black is an ink layer, NEVER a bucket region.
+                # Paint it once after every color fill.
+                continue
             if area < 8:
                 omitted_pixels += area
                 continue
@@ -633,86 +624,43 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         completed += 1
         if completed % 50 == 0:
             print(f'  Fills: {completed}/{len(regions)}, color switches={color_switches}')
-    # All bucket-filled regions have been processed. Narrow ink is drawn
-    # directly from source pixels, never from doubled component contours.
-    # Black ribbon centerlines are drawn after bucket fills, never bucketed.
-    # Bounded path extraction prevents contour-loop cursor excursions.
-    narrow_strokes = 0
-    narrow_skipped = 0
-    narrow_budget = 120
-    for item in sorted(narrow_regions,key=lambda q:(q['rgb']!=(0,0,0),-q['area'])):
-        check_cancel()
-        if narrow_strokes >= narrow_budget:
-            narrow_skipped += 1
-            continue
-        mask = item['mask']
-        if item['area'] < 8:
-            narrow_skipped += 1
-            continue
-        if item.get('ribbon'):
-            # Morphological skeleton, confined to this exact black component.
-            remaining = mask.copy()
-            skeleton = np.zeros_like(mask)
-            kernel = cv2.getStructuringElement(cv2.MORPH_CROSS,(3,3))
-            while cv2.countNonZero(remaining):
-                eroded = cv2.erode(remaining,kernel)
-                opened = cv2.dilate(eroded,kernel)
-                skeleton = cv2.bitwise_or(skeleton,cv2.subtract(remaining,opened))
-                remaining = eroded
-            ys,xs = np.where(skeleton != 0)
-            pixels = {(int(x),int(y)) for y,x in zip(ys,xs)}
-            if len(pixels) < 2 or len(pixels) > 600:
-                narrow_skipped += 1
-                continue
-            # Split at junctions; trace simple chains, no teleporting
-            # between disconnected points in one mouse gesture.
-            offsets = ((-1,-1),(0,-1),(1,-1),(-1,0),(1,0),(-1,1),(0,1),(1,1))
-            neighbors = {q:[(q[0]+dx,q[1]+dy) for dx,dy in offsets
-                             if (q[0]+dx,q[1]+dy) in pixels] for q in pixels}
-            visited_edges = set()
-            paths = []
-            for origin in sorted(pixels,key=lambda q:(len(neighbors[q])==2,q[1],q[0])):
-                for neighbor in neighbors[origin]:
-                    edge = tuple(sorted((origin,neighbor)))
-                    if edge in visited_edges:
-                        continue
-                    chain = [origin,neighbor]
-                    visited_edges.add(edge)
-                    prev,cur = origin,neighbor
-                    while len(neighbors[cur]) == 2 and len(chain) < 240:
-                        nxt = next((q for q in neighbors[cur] if q != prev),None)
-                        if nxt is None:
-                            break
-                        edge = tuple(sorted((cur,nxt)))
-                        if edge in visited_edges:
-                            break
-                        visited_edges.add(edge)
-                        chain.append(nxt)
-                        prev,cur = cur,nxt
-                    if len(chain) >= 3:
-                        paths.append(chain)
-            paths.sort(key=len,reverse=True)
-            paths = [path for path in paths if len(path) >= 5][:4]
-        else:
-            contours,_ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-            paths = [[(int(x),int(y)) for x,y in max(contours,key=lambda c:len(c)).reshape(-1,2)]] if contours else []
-        if not paths:
-            narrow_skipped += 1
-            continue
-        rgb = item['rgb']
-        if rgb != previous_rgb:
-            engine.colors.select_rgb(rgb)
-            previous_rgb = rgb
+    # Final black ink pass. Black pixels are not bucket-filled and never
+    # outlined on both sides. Horizontal runs cover their actual source area.
+    # Preflight the complete plan before issuing any mouse events.
+    black_mask = np.uint8(np.all(source == 0,axis=2))
+    black_jobs = []
+    for y in range(h):
+        xs = np.flatnonzero(black_mask[y])
+        if len(xs):
+            for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1):
+                black_jobs.append((y,int(run[0]),int(run[-1])))
+    black_budget = 1800
+    black_planned = len(black_jobs)
+    black_strokes = 0
+    print(f'BLACK INK PREFLIGHT: {black_planned} runs; safety limit={black_budget}',flush=True)
+    if black_planned > black_budget:
+        print('BLACK INK SKIPPED: exceeds safe action budget; no partial black pass',flush=True)
+    elif black_jobs:
+        if previous_rgb != (0,0,0):
+            engine.colors.select_rgb((0,0,0))
+            previous_rgb = (0,0,0)
             color_switches += 1
         engine.tools.select('pencil')
         engine.stroke_size.select(1)
-        for path in paths[:max(0,narrow_budget-narrow_strokes)]:
-            mapped = [(left+x,top+y) for x,y in path]
+        for y,x0,x1 in black_jobs:
+            check_cancel()
+            mapped = [(left+x0,top+y),(left+x1,top+y)]
             engine.paint.validate_canvas_points(mapped)
-            engine.paint.stroke(mapped,duration=0.008)
-            narrow_strokes += 1
-    print(f'CENTERLINE DETAIL: {narrow_strokes}/{narrow_budget} strokes; '
-          f'{narrow_skipped} regions skipped',flush=True)
+            if x0 == x1:
+                engine.canvas.fill(*mapped[0])
+            else:
+                engine.paint.stroke(mapped,duration=0.008)
+            black_strokes += 1
+            if black_strokes % 200 == 0:
+                print(f'BLACK INK: {black_strokes}/{black_planned}',flush=True)
+    narrow_strokes = 0
+    narrow_skipped = len(narrow_regions)
+    narrow_budget = 0
     engine.stroke_size.select(1)
     # Fine details are never bucket-filled. Trace each contour once and
     # simplify mildly to avoid repeated jitter around individual pixels.
@@ -794,7 +742,10 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     report['thick_outline_regions'] = thick_outline_regions
     report['thick_outline_size_preset'] = 1
     report['black_centerline_components'] = 0
-    report['black_ink_method'] = 'bounded morphological centerlines for black ribbons; compact black surfaces bucket-filled'
+    report['black_ink_method'] = 'single black source-mask raster pass; no black buckets or double contours'
+    report['black_ink_planned_runs'] = black_planned
+    report['black_ink_completed_runs'] = black_strokes
+    report['black_ink_safety_limit'] = black_budget
     report['thick_outline_min_area'] = None
     report['thin_regions'] = len(details)
     report['narrow_pencil_regions'] = len(narrow_regions)
