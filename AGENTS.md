@@ -23,6 +23,15 @@ Draw a recognizable, complete, accurately colored dog in **Microsoft Paint by ph
 - Do not add arbitrary stroke-count limits, remove limits, or change the method merely to get past a preflight failure. Diagnose the actual issue.
 - Do not declare a defect fixed based only on source inspection, a planning simulation, or a successful Git commit.
 
+## Continuous contour color discipline (mandatory)
+
+- **Never sample the source color at every contour pixel to decide the mouse stroke color.** A contour is a geometric path, not a sequence of independently colored pixels.
+- **Outer silhouette:** select the intended outline/ink color once, then trace each continuous outer contour as a continuous mouse stroke. Do not break it into tiny strokes or switch colors at source-pixel boundaries.
+- **Inner boundaries:** plan continuous paths and select a stable, explicitly planned color per boundary/path or region; never switch colors per pixel or per contour point.
+- **Color changes are permitted only between meaningful drawing operations** (e.g. distinct contours, region boundaries, or Bucket fills), not during a single contour.
+- Before committing, inspect the actual drawing loop for point-by-point RGB sampling, repeated color selection inside contour-point loops, and accidental fragmentation of paths. Reject such changes as regressions.
+- If a boundary has multiple source colors, resolve the contour/region ownership in the planner; do not solve it by switching Paint colors on every pixel.
+
 ## Correctness requirements
 
 - Source color masks and intended canvas coordinates must be handled consistently.
