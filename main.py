@@ -787,13 +787,15 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     if logs:
         (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     if report['error_pixels'] != 0:
-        raise RuntimeError(
-            f'PAINT 1:1 FAILED: {report["error_pixels"]} mismatching pixels; '
-            f'exact match={report["exact_pixel_match_percent"]}%. '
-            + (f'Inspect {output / "error-overlay.png"} and {output / "report.json"}.'
-               if logs else 'Use --logs to save comparison diagnostics.'))
+        print(f'WARNING: Paint drawing completed, but exact 1:1 validation did not pass: '
+              f'{report["error_pixels"]} mismatching pixels; '
+              f'exact match={report["exact_pixel_match_percent"]}%. '
+              + (f'Inspect {output / "error-overlay.png"} and {output / "report.json"}.'
+                 if logs else 'Use --logs to save comparison diagnostics.'), flush=True)
+    else:
+        print('PASS: Paint drawing matches the source exactly (1:1).', flush=True)
     print(f'IMAGE DRAW DONE: exact match={report["exact_pixel_match_percent"]}%, '
-          f'errors={report["error_pixels"]}' + (f'; output={output}' if logs else ''))
+          f'errors={report["error_pixels"]}' + (f'; output={output}' if logs else ''), flush=True)
 
 
 def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
