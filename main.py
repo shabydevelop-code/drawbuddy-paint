@@ -495,6 +495,51 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
                 # a filled region's interior must already match its color.
                 mismatch = core & np.any(actual != expected,axis=2)
                 wrong = int(np.count_nonzero(mismatch))
+                if wrong > 4:
+                    # A narrow neck may split a source-connected region into
+                    # multiple Paint Bucket pockets. Refill only substantial
+                    # mismatched interior islands, using their own safe seeds.
+                    # Never click the source boundary or an already-correct pixel.
+                    repair_count = 0
+                    for repair_pass in range(3):
+                        missing_count, missing_labels, missing_stats, _ = (
+                            cv2.connectedComponentsWithStats(
+                                np.uint8(mismatch), connectivity=8))
+                        candidates = sorted(
+                            range(1, missing_count),
+                            key=lambda k: int(missing_stats[k, cv2.CC_STAT_AREA]),
+                            reverse=True)
+                        target = next(
+                            (k for k in candidates
+                             if int(missing_stats[k, cv2.CC_STAT_AREA]) >= 5),
+                            None)
+                        if target is None:
+                            break
+                        island = np.uint8(missing_labels == target) * 255
+                        _, _, _, repair_seed = cv2.minMaxLoc(
+                            cv2.distanceTransform(island, cv2.DIST_L2, 3))
+                        rx, ry = map(int, repair_seed)
+                        if not core[ry, rx] or not mismatch[ry, rx]:
+                            break
+                        point = (left + rx, top + ry)
+                        engine.paint.validate_canvas_points([point])
+                        engine.canvas.fill(*point)
+                        repair_count += 1
+                        screenshot = pg.screenshot()
+                        actual = np.asarray(
+                            screenshot.crop((sx, sy, sx+w, sy+h)).convert('RGB'))
+                        updated = core & np.any(actual != expected, axis=2)
+                        if np.array_equal(updated, mismatch):
+                            # No progress: do not repeat the same click.
+                            break
+                        mismatch = updated
+                    if repair_count:
+                        print(
+                            f'BUCKET NARROW-PASSAGE REFILL: color={rgb}, '
+                            f'extra_clicks={repair_count}, '
+                            f'remaining_pixels={int(np.count_nonzero(mismatch))}',
+                            flush=True)
+                    wrong = int(np.count_nonzero(mismatch))
                 if wrong:
                     # Up to four mismatched pixels, including adjacent ones,
                     # are not sufficient evidence of an open Bucket boundary.
