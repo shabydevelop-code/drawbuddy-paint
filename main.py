@@ -176,6 +176,13 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     # This avoids a large bucket erasing smaller regions drawn earlier.
     regions.sort(key=lambda x:-x['area'])
     # Only true black source pixels become black marks; never trace both sides of a thin black component.
+    # Thin enclosed white highlights cannot be bucket-filled. Preserve them
+    # as short Pencil runs after dark ink, rather than silently dropping them.
+    thin_white_highlights = [item for item in narrow_regions
+                             if item['rgb'] == (255,255,255)]
+    thin_white_pixels = sum(item['area'] for item in thin_white_highlights)
+    print(f'THIN WHITE HIGHLIGHTS: {len(thin_white_highlights)} components, '
+          f'{thin_white_pixels} pixels scheduled after dark ink',flush=True)
     details.sort(key=lambda x:(x['rgb'] == (0,0,0),x['rgb'],-x['area']))
     left,top = 250+(500-w)//2,155+(547-h)//2
     output = Path('output/comparison/full-dog-bucket')
@@ -563,8 +570,35 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             else:
                 print(f'NESTED WHITE HIGHLIGHT COMPLETE '
                       f'{index}/{len(white_after_ink)}',flush=True)
-    narrow_strokes = 0
-    narrow_skipped = len(narrow_regions)
+    thin_white_strokes = 0
+    if thin_white_highlights:
+        # Refresh once after the previous white Bucket fills so that the
+        # Pencil stage touches only pixels that are not already white.
+        sx,sy = engine.paint.point(left,top)
+        actual = np.asarray(pg.screenshot().crop((sx,sy,sx+w,sy+h)).convert('RGB'))
+        missing_white = np.zeros((h,w),dtype=bool)
+        for item in thin_white_highlights:
+            missing_white |= (item['mask'] != 0) & np.any(actual != 255,axis=2)
+        if np.any(missing_white):
+            if previous_rgb != (255,255,255):
+                engine.colors.select_rgb((255,255,255))
+                previous_rgb = (255,255,255)
+                color_switches += 1
+            engine.tools.select('pencil')
+            engine.stroke_size.select(1)
+            for y in np.flatnonzero(np.any(missing_white,axis=1)):
+                xs = np.flatnonzero(missing_white[y])
+                for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1):
+                    check_cancel()
+                    mapped = [(left+int(run[0]),top+int(y)),
+                              (left+int(run[-1]),top+int(y))]
+                    engine.paint.validate_canvas_points(mapped)
+                    log_final_pencil('thin_white_highlight',(255,255,255),mapped)
+                    engine.paint.stroke(mapped,duration=0.008)
+                    thin_white_strokes += 1
+        print(f'THIN WHITE HIGHLIGHTS DRAWN: {thin_white_strokes} Pencil runs',flush=True)
+    narrow_strokes = thin_white_strokes
+    narrow_skipped = len(narrow_regions) - len(thin_white_highlights)
     narrow_budget = 0
     engine.stroke_size.select(1)
     # Fine details are never bucket-filled. Trace each contour once and
