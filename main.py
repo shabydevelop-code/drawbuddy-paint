@@ -855,7 +855,7 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
     lightest = rgb.min(axis=2).astype(np.int16)
     chroma = rgb.max(axis=2).astype(np.int16) - lightest
     background_candidate = np.uint8((lightest >= 210) & (chroma <= 18))
-    component_count, component_labels = cv2.connectedComponents(background_candidate, 8)
+    component_count, component_labels = cv2.connectedComponents(background_candidate, connectivity=8)
     border_ids = np.unique(np.concatenate((component_labels[0, :],
         component_labels[-1, :], component_labels[:, 0], component_labels[:, -1])))
     border_ids = border_ids[border_ids != 0]
