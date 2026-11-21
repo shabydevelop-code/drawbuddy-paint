@@ -733,51 +733,9 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     black_gap_stats = {'enabled':bool(black_gap_finish),'planned_strokes':0,
                        'attempted_strokes':0,'skipped_strokes':0}
     if black_gap_finish:
-        # Repair only missing black ink, never legitimate white background
-        # or white details. Capture once and leave other colors untouched.
-        import pyautogui as pg
-        sx,sy = engine.paint.point(left,top)
-        screenshot = pg.screenshot()
-        if sx < 0 or sy < 0 or sx+w > screenshot.width or sy+h > screenshot.height:
-            raise RuntimeError('Black gap crop outside display')
-        actual = np.asarray(screenshot.crop((sx,sy,sx+w,sy+h)).convert('RGB'))
-        target_black = np.all(source == 0,axis=2)
-        actual_white = np.all(actual >= 245,axis=2)
-        missing = np.uint8(target_black & actual_white)*255
-        black_gap_stats['missing_black_pixels'] = int(np.count_nonzero(missing))
-        count,labels,stats,_ = cv2.connectedComponentsWithStats(missing,8)
-        jobs = []
-        for i in range(1,count):
-            area = int(stats[i,cv2.CC_STAT_AREA])
-            if area < 3:
-                continue
-            component = np.uint8(labels == i)*255
-            contours,_ = cv2.findContours(component,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-            if not contours:
-                continue
-            contour = max(contours,key=lambda c:len(c))
-            path = [(left+int(p[0][0]),top+int(p[0][1])) for p in contour]
-            if len(path) < 2 or len(path) > 240:
-                continue
-            jobs.append((area,path))
-        jobs.sort(key=lambda job:-job[0])
-        black_gap_stats['planned_strokes'] = len(jobs)
-        black_gap_stats['skipped_strokes'] = max(0,len(jobs)-black_gap_limit)
-        print(f'BLACK GAP FINISH: {black_gap_stats["missing_black_pixels"]} missing black pixels, '
-              f'{len(jobs)} paths, limit={black_gap_limit}',flush=True)
-        if jobs:
-            engine.colors.select_rgb((0,0,0))
-            previous_rgb = (0,0,0)
-            color_switches += 1
-            engine.tools.select('pencil')
-            engine.stroke_size.select(1)
-            for i,(_,path) in enumerate(jobs[:black_gap_limit],1):
-                check_cancel()
-                engine.paint.validate_canvas_points(path)
-                engine.paint.stroke(path,duration=0.008)
-                black_gap_stats['attempted_strokes'] = i
-                if i % 25 == 0:
-                    print(f'BLACK GAP FINISH: {i}/{min(len(jobs),black_gap_limit)}',flush=True)
+        print('BLACK GAP FINISH DISABLED: unsafe contour-following repair was removed; '
+              'no finishing mouse actions will be performed.',flush=True)
+        black_gap_stats['disabled_reason'] = 'Unsafe contour-following repair disabled'
     report = compare_paint_canvas(engine.paint,output/'expected.png',
                                   w,h,left,top,output=output,tolerance=0)
     report['test'] = 'full dog: color boundaries separate from black source-pixel ink'
@@ -1315,7 +1273,7 @@ def main():
     parser.add_argument('--full-dog-bucket', type=Path, help='Draw entire color pixel map with closed contours and bucket fills')
     parser.add_argument('--pixel-perfect-finish', action='store_true', help='Experimental pixel print correction after drawing')
     parser.add_argument('--pixel-finish-limit', type=int, default=1500, help='Maximum finishing strokes')
-    parser.add_argument('--black-gap-finish', action='store_true', help='Repair white gaps only where the source is black')
+    parser.add_argument('--black-gap-finish', action='store_true', help='Disabled safety mode: report only, no finishing strokes')
     parser.add_argument('--black-gap-limit', type=int, default=120, help='Maximum black gap repair strokes')
     parser.add_argument('--continuous-paths', type=Path, help='Continuous-path analysis JSON')
     parser.add_argument('--continuous-path-test', type=int, choices=(1, 20), help='Draw 1 or 20 paths in Paint')
