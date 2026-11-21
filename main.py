@@ -322,6 +322,31 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
                        if color_batches.get(rgb)]
     print(f'NESTED LAYERS: {len(white_after_ink)} white highlights '
           'scheduled after dark ink',flush=True)
+    # Diagnose source-white islands that the bucket planner rejected.
+    # These can include eye glints: a one/two-pixel-wide component has
+    # no eroded interior, so it never enters color_batches.
+    white_source = np.all(source == 255,axis=2)
+    white_count,white_labels,white_stats,_ = cv2.connectedComponentsWithStats(
+        np.uint8(white_source),connectivity=8)
+    planned_white = np.zeros((h,w),bool)
+    for region in color_batches.get((255,255,255),[]):
+        planned_white |= region['mask'] != 0
+    missing_white_islands = []
+    for island_id in range(1,white_count):
+        component = white_labels == island_id
+        if (np.any(component[0,:]) or np.any(component[-1,:])
+                or np.any(component[:,0]) or np.any(component[:,-1])):
+            continue
+        if not np.any(component & planned_white):
+            area = int(white_stats[island_id,cv2.CC_STAT_AREA])
+            x = int(white_stats[island_id,cv2.CC_STAT_LEFT])
+            y = int(white_stats[island_id,cv2.CC_STAT_TOP])
+            missing_white_islands.append((area,x,y))
+    print(f'WHITE SOURCE DIAGNOSTIC: '
+          f'{len(missing_white_islands)} enclosed white islands '
+          f'not in Bucket plan; area/x/y='
+          f'{sorted(missing_white_islands,reverse=True)[:30]}',flush=True)
+
     print('DRAW STAGE 2/3: COLOR CONTOURS + BUCKET OVER BLACK BASE',flush=True)
     print(f'DRAW STAGE 2/3: COMPLETE REGIONS BY COLOR '
           f'({len(batch_order)} colors, {len(regions)} regions)',flush=True)
