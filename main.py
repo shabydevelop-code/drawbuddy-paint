@@ -593,45 +593,10 @@ def draw_full_dog_bucket(plan_path, speed):
     completed = 0
     color_switches = 0
     previous_rgb = None
-    # Deterministic local edge coverage: no screenshots or forced display
-    # refresh during drawing. A one-pixel inner boundary closes narrow
-    # contour/bucket seams while retaining the target region color.
+    # Do not retrace filled region boundaries: it thickens and pixelates edges.
     repaired = 0
     repair_strokes = 0
     skipped = 0
-    def finish_region(region, rgb):
-        nonlocal repaired, repair_strokes
-        contour = np.asarray(region['paths'][0],np.int32)
-        x,y,bw,bh = cv2.boundingRect(contour)
-        if bw < 3 or bh < 3:
-            return 0
-        x0,y0 = max(0,x-1),max(0,y-1)
-        x1,y1 = min(w,x+bw+1),min(h,y+bh+1)
-        local = np.zeros((y1-y0,x1-x0),np.uint8)
-        shifted = contour - np.array([x0,y0],np.int32)
-        cv2.fillPoly(local,[shifted],255)
-        target = cv2.cvtColor(source[y0:y1,x0:x1],cv2.COLOR_BGR2RGB)
-        local &= np.uint8(np.all(target == np.asarray(rgb,np.uint8),axis=2))*255
-        # Trace the inner boundary of this exact-color component only.
-        inner = cv2.erode(local,np.ones((3,3),np.uint8))
-        boundary = cv2.subtract(local,inner)
-        paths,_ = cv2.findContours(boundary,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
-        count = 0
-        if paths:
-            engine.tools.select('pencil')
-        for path in paths:
-            if len(path) < 2:
-                continue
-            pts = [tuple(map(int,v[0])) for v in path]
-            if len(pts) > 2:
-                pts.append(pts[0])
-            mapped = [(left+x0+px,top+y0+py) for px,py in pts]
-            engine.paint.validate_canvas_points(mapped)
-            engine.paint.stroke(mapped,duration=0.008)
-            repaired += len(pts)
-            repair_strokes += 1
-            count += 1
-        return count
 
     for region in regions:
         check_cancel()
@@ -650,9 +615,6 @@ def draw_full_dog_bucket(plan_path, speed):
         engine.paint.validate_canvas_points([fill_point])
         engine.tools.select('bucket')
         engine.canvas.fill(*fill_point)
-        local_repairs = finish_region(region, rgb)
-        if local_repairs:
-            print(f'  Region {completed+1}: repaired {local_repairs} narrow white-gap strokes')
         completed += 1
         if completed % 50 == 0:
             print(f'  Fills: {completed}/{len(regions)}, color switches={color_switches}')
@@ -689,7 +651,7 @@ def draw_full_dog_bucket(plan_path, speed):
     report['white_gap_repair_attempted_pixels'] = repaired
     report['white_gap_repair_strokes'] = repair_strokes
     report['white_gap_skipped_pixels'] = skipped
-    report['repair_method'] = 'deterministic boundary tracing without intermediate screenshots'
+    report['repair_method'] = 'disabled repeated boundary tracing; no intermediate screenshots'
     report['elapsed_seconds'] = round(time.perf_counter()-started,3)
     report['startup_timing'] = startup_timings
     (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
