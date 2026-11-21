@@ -534,7 +534,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     jobs = []
     max_points_per_stroke = 300
     for stage,rgb,mask in stages:
-        count,labels,stats,_ = cv2.connectedComponentsWithStats(mask,4)
+        count,labels,stats,_ = cv2.connectedComponentsWithStats(mask,connectivity=4)
         for component_id in range(1,count):
             x0 = int(stats[component_id,cv2.CC_STAT_LEFT])
             y0 = int(stats[component_id,cv2.CC_STAT_TOP])
