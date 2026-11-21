@@ -40,7 +40,7 @@ The plan uses image-derived colors and therefore approximates a reference with m
 
 ## Optional diagnostic files
 
-By default, `main.py` keeps the generated source-image plan in memory and does not write diagnostic files. Screenshot comparison and strict 1:1 validation still run. Add `--logs` to save the plan, expected image, screenshots, error overlay, JSON reports and timing diagnostics under `output/`.
+By default, `main.py` keeps the generated source-image plan in memory and does not write diagnostic files. Screenshot comparison and strict 1:1 validation still run. Add `--logs` to save the plan, expected image, screenshots, error overlay, JSON reports and timing diagnostics in a unique `output/YYYY-MM-DD_HH-MM-SS_microseconds/` directory for each run. No previous run's files are overwritten. `assets/` is never used for logs.
 
 ```powershell
 python -u main.py --house --speed 50 --logs
