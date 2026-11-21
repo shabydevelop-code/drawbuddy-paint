@@ -39,6 +39,19 @@ def compare(reference, actual, tolerance=12):
         regions.append({"x": x, "y": y, "width": width,
                         "height": height, "error_pixels": area})
     regions.sort(key=lambda region: region["error_pixels"], reverse=True)
+    # Classify exact mismatches before applying tolerance. This distinguishes
+    # missing outline ink from overdrawn ink and wrong non-ink colors.
+    reference_dark = np.all(reference <= 24, axis=2)
+    actual_dark = np.all(actual <= 40, axis=2)
+    exact_mismatch = max_channel != 0
+    missing_ink = exact_mismatch & reference_dark & ~actual_dark
+    extra_ink = exact_mismatch & ~reference_dark & actual_dark
+    other_color = exact_mismatch & ~(missing_ink | extra_ink)
+    mismatch_breakdown = {
+        "missing_dark_pixels": int(np.count_nonzero(missing_ink)),
+        "extra_dark_pixels": int(np.count_nonzero(extra_ink)),
+        "other_color_mismatch_pixels": int(np.count_nonzero(other_color)),
+    }
     return {
         "width": int(reference.shape[1]),
         "height": int(reference.shape[0]),
@@ -47,6 +60,7 @@ def compare(reference, actual, tolerance=12):
         "within_tolerance_percent": round(100 * float(np.mean(error_mask == 0)), 3),
         "mean_absolute_channel_error": round(float(difference.mean()), 3),
         "error_pixels": int(error_mask.sum()),
+        "exact_mismatch_breakdown": mismatch_breakdown,
         "error_regions": regions,
     }, max_channel, error_mask
 
