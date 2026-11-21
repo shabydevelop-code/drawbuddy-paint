@@ -739,40 +739,73 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         fallback_completed += 1
         if fallback_completed % 200 == 0:
             print(f'BUCKET FALLBACK: {fallback_completed}/{len(fallback_jobs)}',flush=True)
-    # Final black ink pass. Black pixels are not bucket-filled and never
-    # outlined on both sides. Horizontal runs cover their actual source area.
-    # Preflight the complete plan before issuing any mouse events.
-    black_mask = np.uint8(np.all(source == 0,axis=2))
-    black_jobs = []
-    for y in range(h):
-        xs = np.flatnonzero(black_mask[y])
-        if len(xs):
-            for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1):
-                black_jobs.append((y,int(run[0]),int(run[-1])))
-    black_budget = 1800
-    black_planned = len(black_jobs)
+    # Restore dark source ink AFTER all bucket fills. Do not use horizontal
+    # raster runs or skip the entire ink pass due to an arbitrary budget.
+    # Near-black source colors are ink too, not broad bucket regions.
+    ink_components = []
+    for ink_rgb,ink_mask in groups:
+        if max(ink_rgb) > 24:
+            continue
+        count,labels,stats,_ = cv2.connectedComponentsWithStats(
+            ink_mask,connectivity=8)
+        for component_id in range(1,count):
+            component = np.uint8(labels == component_id)*255
+            ink_components.append((ink_rgb,component,
+                                   int(stats[component_id,cv2.CC_STAT_AREA])))
+    print(f'FINAL INK STAGE: {len(ink_components)} connected dark details',flush=True)
     black_strokes = 0
-    print(f'BLACK INK PREFLIGHT: {black_planned} runs; safety limit={black_budget}',flush=True)
-    if black_planned > black_budget:
-        print('BLACK INK SKIPPED: exceeds safe action budget; no partial black pass',flush=True)
-    elif black_jobs:
-        if previous_rgb != (0,0,0):
-            engine.colors.select_rgb((0,0,0))
-            previous_rgb = (0,0,0)
+    black_planned = len(ink_components)
+    for ink_rgb,component,area in sorted(ink_components,key=lambda item:-item[2]):
+        check_cancel()
+        if ink_rgb != previous_rgb:
+            engine.colors.select_rgb(ink_rgb)
+            previous_rgb = ink_rgb
             color_switches += 1
         engine.tools.select('pencil')
         engine.stroke_size.select(1)
-        for y,x0,x1 in black_jobs:
-            check_cancel()
-            mapped = [(left+x0,top+y),(left+x1,top+y)]
-            engine.paint.validate_canvas_points(mapped)
-            if x0 == x1:
-                engine.canvas.fill(*mapped[0])
-            else:
-                engine.paint.stroke(mapped,duration=0.008)
-            black_strokes += 1
-            if black_strokes % 200 == 0:
-                print(f'BLACK INK: {black_strokes}/{black_planned}',flush=True)
+        # Skeletonize thick source ink so each visible line is traced once,
+        # not twice along opposite contour edges.
+        skeleton = cv2.ximgproc.thinning(component) if hasattr(cv2,'ximgproc') else None
+        if skeleton is None:
+            # Morphological skeleton works without opencv-contrib.
+            skeleton = np.zeros_like(component)
+            work = component.copy()
+            kernel = cv2.getStructuringElement(cv2.MORPH_CROSS,(3,3))
+            while cv2.countNonZero(work):
+                eroded = cv2.erode(work,kernel)
+                opened = cv2.dilate(eroded,kernel)
+                skeleton = cv2.bitwise_or(
+                    skeleton,cv2.subtract(work,opened))
+                work = eroded
+        # Trace connected skeleton segments; do not change colors per point.
+        remaining = set(zip(*np.where(skeleton != 0)))
+        while remaining:
+            start = min(remaining)
+            stack = [start]
+            remaining.remove(start)
+            path = [start]
+            while stack:
+                y,x = stack[-1]
+                candidates = [(y+dy,x+dx) for dy,dx in
+                              ((-1,0),(0,-1),(0,1),(1,0),
+                               (-1,-1),(-1,1),(1,-1),(1,1))
+                              if (y+dy,x+dx) in remaining]
+                if candidates:
+                    nxt = candidates[0]
+                    remaining.remove(nxt)
+                    stack.append(nxt)
+                    path.append(nxt)
+                else:
+                    stack.pop()
+                    if stack:
+                        path.append(stack[-1])
+            if path:
+                mapped = [(left+x,top+y) for y,x in path]
+                engine.paint.validate_canvas_points(mapped)
+                engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
+                                    duration=0.012)
+                black_strokes += 1
+    print(f'FINAL INK COMPLETE: {black_strokes} contour strokes',flush=True)
     narrow_strokes = 0
     narrow_skipped = len(narrow_regions)
     narrow_budget = 0
