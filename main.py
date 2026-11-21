@@ -919,9 +919,9 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         fallback_completed += 1
         if fallback_completed % 200 == 0:
             print(f'BUCKET FALLBACK: {fallback_completed}/{len(fallback_jobs)}',flush=True)
-    # The black silhouette is already painted with Bucket. Never retrace
-    # every source-ink component: that doubles outlines and creates jagged
-    # edges. Only restore genuinely missing dark details INSIDE color fills.
+    # Black base already supplies the dark outlines. Do not run the
+    # optional fine Pencil restoration at the end of the normal workflow.
+    # Preserve verification and report missing dark pixels without drawing.
     sx,sy = engine.paint.point(left,top)
     screenshot = pg.screenshot()
     if sx < 0 or sy < 0 or sx+w > screenshot.width or sy+h > screenshot.height:
@@ -930,48 +930,12 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     source_rgb = source[:,:,::-1]
     expected_dark = np.all(source_rgb <= 24,axis=2)
     actual_dark = np.all(actual <= 40,axis=2)
-    missing_dark = np.uint8(expected_dark & ~actual_dark)*255
-    dark_count,dark_labels,dark_stats,_ = cv2.connectedComponentsWithStats(
-        missing_dark,connectivity=8)
-    black_planned = dark_count-1
+    ink_unresolved = int(np.count_nonzero(expected_dark & ~actual_dark))
+    black_planned = 0
     black_strokes = 0
     ink_restored = 0
-    ink_unresolved = 0
-    for component_id in range(1,dark_count):
-        check_cancel()
-        component = np.uint8(dark_labels == component_id)*255
-        area = int(dark_stats[component_id,cv2.CC_STAT_AREA])
-        # A long missing boundary means the base or an earlier color fill
-        # failed; never hide it with a full-image Pencil outline pass.
-        if area > 32:
-            ink_unresolved += area
-            print(f'MISSING DARK AREA NEEDS BOUNDARY FIX: '
-                  f'component={component_id} pixels={area}',flush=True)
-            continue
-        contours,_ = cv2.findContours(
-            component,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
-        if not contours:
-            continue
-        if previous_rgb != outline_rgb:
-            engine.colors.select_rgb(outline_rgb)
-            previous_rgb = outline_rgb
-            color_switches += 1
-        engine.tools.select('pencil')
-        engine.stroke_size.select(1)
-        for contour in contours:
-            path = [tuple(map(int,p[0])) for p in contour]
-            if len(path)>2:
-                path.append(path[0])
-            mapped = [(left+x,top+y) for x,y in path]
-            engine.paint.validate_canvas_points(mapped)
-            engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
-                                duration=0.012)
-            black_strokes += 1
-        ink_restored += area
-    print(f'SELECTIVE DARK DETAILS: {black_strokes} localized strokes, '
-          f'{ink_restored} missing pixels targeted, '
-          f'{ink_unresolved} unresolved pixels; no global black retrace',
-          flush=True)
+    print(f'FINAL BLACK PENCIL DISABLED: {ink_unresolved} dark pixels '
+          'currently differ; verification only',flush=True)
     # Last nested layer: white glints inside black eyes. Keep them after
     # the dark ink pass; do not globally paint white before black.
     if white_after_ink:
