@@ -361,8 +361,30 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             check_cancel()
             engine.tools.select('pencil')
             engine.stroke_size.select(1)
-            # All enclosing and hole boundaries must exist before Bucket.
-            for path in region['paths']:
+            # For regions touching source ink, inset their colored boundary
+            # by one pixel. The black foundation then remains exposed as a
+            # frame instead of being overwritten by the color contour.
+            paths = region['paths']
+            if preserve_black_base and rgb != (255,255,255):
+                source_ink = dark_mask != 0
+                near_ink = cv2.dilate(np.uint8(source_ink),
+                                     np.ones((3,3),np.uint8)) != 0
+                if np.any((region['mask'] != 0) & near_ink):
+                    inset = cv2.erode(region['mask'],
+                                     np.ones((3,3),np.uint8))
+                    # Do not alter narrow shapes or disconnected interiors:
+                    # they still use the proven original contour workflow.
+                    n_inset,_,_,_ = cv2.connectedComponentsWithStats(inset,8)
+                    if n_inset == 2 and np.any(inset):
+                        contours,hierarchy = cv2.findContours(
+                            inset,cv2.RETR_CCOMP,cv2.CHAIN_APPROX_NONE)
+                        paths = []
+                        for contour in contours:
+                            points = [tuple(map(int,p[0])) for p in contour]
+                            if points:
+                                paths.append(points+[points[0]])
+            # Draw the enclosing and hole boundaries before Bucket.
+            for path in paths:
                 mapped = [(left+x,top+y) for x,y in path]
                 engine.paint.validate_canvas_points(mapped)
                 engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,
@@ -759,7 +781,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
           f'errors={report["error_pixels"]}; output={output}')
 
 
-def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None, diagnostic_only=False, restore_ink=False):
+def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120, logs=False, output_dir=None, diagnostic_only=False, restore_ink=False, preserve_black_base=False):
     """Full image: all color components, closed contours, Paint bucket, no raster strokes."""
     import time
     startup_clock = time.perf_counter()
@@ -1843,7 +1865,7 @@ def draw_source_image(source_path, speed, colors_limit=50, pixel_finish=False, f
           'using existing full contour/Bucket engine',flush=True)
     draw_image_bucket(plan_path if logs else plan,speed,pixel_finish,finish_limit,
                          black_gap_finish,black_gap_limit,logs=logs,output_dir=output_dir,
-                      diagnostic_only=diagnostic_only, restore_ink=restore_ink)
+                      diagnostic_only=diagnostic_only, restore_ink=restore_ink, preserve_black_base=preserve_black_base)
 
 
 
@@ -1920,6 +1942,8 @@ def main():
                         help='Compare resized versus quantized contours without Paint')
     parser.add_argument('--preview-only', action='store_true',
                         help='Save resized and quantized preview to output/preview.png; do not launch Paint')
+    parser.add_argument('--preserve-black-base', action='store_true',
+                        help='Inset color contours adjacent to source ink to preserve black frames')
     parser.add_argument('--restore-ink', action='store_true',
                         help='Restore missing source-defined dark contours after color fills')
     parser.add_argument('--diagnostic-only', action='store_true',
@@ -1953,7 +1977,7 @@ def main():
     draw_source_image(args.source_image, args.speed, colors_limit=args.colors, logs=(args.logs or args.diagnostic_only),
                       output_dir=output_dir, preview_only=args.preview_only,
                       historical_palette=(not args.median_cut and not args.legacy_source),
-                      diagnostic_only=args.diagnostic_only, restore_ink=args.restore_ink)
+                      diagnostic_only=args.diagnostic_only, restore_ink=args.restore_ink, preserve_black_base=args.preserve_black_base)
 
 
 if __name__ == '__main__':
