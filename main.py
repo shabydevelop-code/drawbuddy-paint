@@ -150,11 +150,11 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
                                   int(xs.max()),int(ys.max())],
             'sample_xy': [[int(x),int(y)] for x,y in zip(xs[:30],ys[:30])]
         })
-    diagnostic_dir = Path('output/comparison/full-dog-bucket')
+    diagnostic_dir = Path('output/comparison/image-bucket')
     diagnostic_dir.mkdir(parents=True,exist_ok=True)
     (diagnostic_dir/'boundary-diagnostics.json').write_text(
         json.dumps(boundary_diagnostics,indent=2),encoding='utf-8')
-    print('BOUNDARY DIAGNOSTICS: output/comparison/full-dog-bucket/'
+    print('BOUNDARY DIAGNOSTICS: output/comparison/image-bucket/'
           'boundary-diagnostics.json',flush=True)
     # Holes are not missing pixels: RETR_EXTERNAL deliberately surrounds
     # inner islands. Paint outer areas first, then repaint their inner islands.
@@ -176,7 +176,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     # Only true black source pixels become black marks; never trace both sides of a thin black component.
     details.sort(key=lambda x:(x['rgb'] == (0,0,0),x['rgb'],-x['area']))
     left,top = 250+(500-w)//2,155+(547-h)//2
-    output = Path('output/comparison/full-dog-bucket')
+    output = Path('output/comparison/image-bucket')
     output.mkdir(parents=True,exist_ok=True)
     cv2.imwrite(str(output/'expected.png'),source)
     print(f'IMAGE DRAW: {len(regions)} fill regions, {len(details)} thin details, '
@@ -789,7 +789,7 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
 
 def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
                       black_gap_finish=False, black_gap_limit=120):
-    """Convert a lossless <=16-color image to the existing dog contour/Bucket engine."""
+    """Convert a lossless <=16-color image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
     image = cv2.imread(str(source_path),cv2.IMREAD_COLOR)
@@ -837,7 +837,7 @@ def main():
     source_group = parser.add_mutually_exclusive_group(required=True)
     source_group.add_argument('--house', action='store_true', help='Use assets/house-reference.png')
     source_group.add_argument('--source-image', type=Path, help='Exact-color source image (up to 16 colors)')
-    source_group.add_argument('--full-dog-bucket', type=Path, help='Existing 16-color Paint stroke plan')
+    source_group.add_argument('--image-bucket', type=Path, help='Existing 16-color Paint stroke plan')
     parser.add_argument('--speed', type=float, default=20, help='Drawing speed multiplier (0..100)')
     parser.add_argument('--pixel-perfect-finish', action='store_true', help='Experimental local pixel correction')
     parser.add_argument('--pixel-finish-limit', type=int, default=1500)
@@ -850,8 +850,8 @@ def main():
         parser.error('Finishing limits must be positive')
     if args.pixel_perfect_finish and args.black_gap_finish:
         parser.error('Choose only one finishing mode')
-    if args.full_dog_bucket is not None:
-        draw_image_bucket(args.full_dog_bucket, args.speed,
+    if args.image_bucket is not None:
+        draw_image_bucket(args.image_bucket, args.speed,
                              args.pixel_perfect_finish, args.pixel_finish_limit,
                              args.black_gap_finish, args.black_gap_limit)
     else:
