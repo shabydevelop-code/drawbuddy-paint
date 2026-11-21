@@ -461,7 +461,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         # a pixel is already black. This also repairs broken window borders.
         ink_contours,_ = cv2.findContours(
             np.uint8(expected_dark)*255,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
-        for contour in sorted(ink_contours,key=cv2.arcLength,reverse=True):
+        for contour in sorted(ink_contours,key=lambda contour:cv2.arcLength(contour,True),reverse=True):
             check_cancel()
             points = [tuple(map(int,p[0])) for p in contour]
             if not points:
