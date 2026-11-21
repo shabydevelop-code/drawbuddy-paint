@@ -1233,8 +1233,9 @@ def main():
                         help='Compare resized versus quantized contours without Paint')
     parser.add_argument('--preview-only', action='store_true',
                         help='Save resized and quantized preview to output/preview.png; do not launch Paint')
-    parser.add_argument('--preserve-black-base', action='store_true',
-                        help='Inset color contours adjacent to source ink to preserve black frames')
+    parser.add_argument('--no-preserve-black-base', dest='preserve_black_base', action='store_false',
+                        help='Disable default black-frame preservation for comparison')
+    parser.set_defaults(preserve_black_base=True)
     parser.add_argument('--restore-ink', action='store_true',
                         help='Restore missing source-defined dark contours after color fills')
     parser.add_argument('--diagnostic-only', action='store_true',
