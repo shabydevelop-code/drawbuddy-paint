@@ -7,7 +7,7 @@ from drawbuddy.drawing_engine import DrawingEngine
 from compare_images import compare_paint_canvas
 
 
-def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120):
+def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, black_gap_finish=False, black_gap_limit=120, logs=False):
     """Full image: all color components, closed contours, Paint bucket, no raster strokes."""
     import time
     startup_clock = time.perf_counter()
@@ -16,7 +16,8 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     from drawbuddy.controller import check_cancel
     import_seconds = time.perf_counter() - startup_clock
     stage_clock = time.perf_counter()
-    data = json.loads(Path(plan_path).read_text(encoding='utf-8'))
+    data = (plan_path if isinstance(plan_path, dict)
+            else json.loads(Path(plan_path).read_text(encoding='utf-8')))
     read_seconds = time.perf_counter() - stage_clock
     stage_clock = time.perf_counter()
     w, h = data.get('width'), data.get('height')
@@ -150,12 +151,13 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
                                   int(xs.max()),int(ys.max())],
             'sample_xy': [[int(x),int(y)] for x,y in zip(xs[:30],ys[:30])]
         })
-    diagnostic_dir = Path('output/comparison/image-bucket')
-    diagnostic_dir.mkdir(parents=True,exist_ok=True)
-    (diagnostic_dir/'boundary-diagnostics.json').write_text(
-        json.dumps(boundary_diagnostics,indent=2),encoding='utf-8')
-    print('BOUNDARY DIAGNOSTICS: output/comparison/image-bucket/'
-          'boundary-diagnostics.json',flush=True)
+    if logs:
+        diagnostic_dir = Path('output/comparison/image-bucket')
+        diagnostic_dir.mkdir(parents=True,exist_ok=True)
+        (diagnostic_dir/'boundary-diagnostics.json').write_text(
+            json.dumps(boundary_diagnostics,indent=2),encoding='utf-8')
+        print('BOUNDARY DIAGNOSTICS: output/comparison/image-bucket/'
+              'boundary-diagnostics.json',flush=True)
     # Holes are not missing pixels: RETR_EXTERNAL deliberately surrounds
     # inner islands. Paint outer areas first, then repaint their inner islands.
     # This is a layered bucket plan, not thousands of pixel-by-pixel strokes.
@@ -176,9 +178,10 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     # Only true black source pixels become black marks; never trace both sides of a thin black component.
     details.sort(key=lambda x:(x['rgb'] == (0,0,0),x['rgb'],-x['area']))
     left,top = 250+(500-w)//2,155+(547-h)//2
-    output = Path('output/comparison/image-bucket')
-    output.mkdir(parents=True,exist_ok=True)
-    cv2.imwrite(str(output/'expected.png'),source)
+    if logs:
+        output = Path('output/comparison/image-bucket')
+        output.mkdir(parents=True,exist_ok=True)
+        cv2.imwrite(str(output/'expected.png'),source)
     print(f'IMAGE DRAW: {len(regions)} fill regions, {len(details)} thin details, '
           f'{omitted_pixels} noise pixels omitted; black details last')
     print(f'BUCKET WIDTH CHECK: {len(narrow_regions)} components have no '
@@ -215,7 +218,8 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
         'total_before_drawing_seconds': round(startup_total_seconds,3),
     }
     print('STARTUP TIMING:', json.dumps(startup_timings,ensure_ascii=False),flush=True)
-    (output/'startup-timing.json').write_text(json.dumps(startup_timings,indent=2),encoding='utf-8')
+    if logs:
+        (output/'startup-timing.json').write_text(json.dumps(startup_timings,indent=2),encoding='utf-8')
     started = time.perf_counter()
     completed = 0
     thick_outline_regions = 0
@@ -413,8 +417,9 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
         final_pencil_log.append(entry)
         print('FINAL PENCIL ACTION: ' +
               json.dumps(entry,separators=(',',':')),flush=True)
-        (output/'final-pencil-actions.json').write_text(
-            json.dumps(final_pencil_log,indent=2),encoding='utf-8')
+        if logs:
+            (output/'final-pencil-actions.json').write_text(
+                json.dumps(final_pencil_log,indent=2),encoding='utf-8')
     fallback_completed = 0
     for rgb,y,x0,x1 in fallback_jobs:
         check_cancel()
@@ -736,8 +741,9 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
                 'pixels remain; drawing not accepted as complete.')
     repaired = gap_pixels
     repair_strokes = len(gap_jobs)
-    report = compare_paint_canvas(engine.paint,output/'expected.png',
-                                  w,h,left,top,output=output,tolerance=0)
+    report = compare_paint_canvas(engine.paint,
+                                  output/'expected.png' if logs else cv2.cvtColor(source,cv2.COLOR_BGR2RGB),
+                                  w,h,left,top,output=output,tolerance=0,save_logs=logs)
     # A completed drawing is not a passed 1:1 test unless every pixel agrees.
     # Persist the comparison report before rejecting the drawing.
     report['test'] = 'generic image: color boundaries separate from black source-pixel ink'
@@ -777,18 +783,20 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     report['startup_timing'] = startup_timings
     report['pixel_finish'] = finish_stats
     report['black_gap_finish'] = black_gap_stats
-    (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+    if logs:
+        (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     if report['error_pixels'] != 0:
         raise RuntimeError(
             f'PAINT 1:1 FAILED: {report["error_pixels"]} mismatching pixels; '
             f'exact match={report["exact_pixel_match_percent"]}%. '
-            f'Inspect {output / "error-overlay.png"} and {output / "report.json"}.')
+            + (f'Inspect {output / "error-overlay.png"} and {output / "report.json"}.'
+               if logs else 'Use --logs to save comparison diagnostics.'))
     print(f'IMAGE DRAW DONE: exact match={report["exact_pixel_match_percent"]}%, '
-          f'errors={report["error_pixels"]}; output={output}')
+          f'errors={report["error_pixels"]}' + (f'; output={output}' if logs else ''))
 
 
 def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
-                      black_gap_finish=False, black_gap_limit=120):
+                      black_gap_finish=False, black_gap_limit=120, logs=False):
     """Convert a lossless <=16-color image to the generic contour/Bucket engine."""
     import cv2
     import numpy as np
@@ -818,18 +826,20 @@ def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
                 strokes.append([int(run[0]),y,int(run[-1]),y])
         groups.append({'rgb':'#%02X%02X%02X'%color,
                        'pixels':int(count),'strokes':strokes})
-    output = Path('output/pixel-map')
-    output.mkdir(parents=True,exist_ok=True)
-    plan_path = output/'pixel-map-paint-plan16.json'
-    plan_path.write_text(json.dumps({
+    plan = {
         'format':'drawbuddy-paint-stroke-plan-v1','width':w,'height':h,
         'coordinate_system':'image-local-zero-based','background':'white-prefilled',
         'groups':groups
-    },separators=(',',':')),encoding='utf-8')
+    }
+    if logs:
+        output = Path('output/pixel-map')
+        output.mkdir(parents=True,exist_ok=True)
+        plan_path = output/'pixel-map-paint-plan16.json'
+        plan_path.write_text(json.dumps(plan,separators=(',',':')),encoding='utf-8')
     print(f'SOURCE IMAGE: {source_path}, {w}x{h}, {len(colors)} exact colors; '
           'using existing full contour/Bucket engine',flush=True)
-    draw_image_bucket(plan_path,speed,pixel_finish,finish_limit,
-                         black_gap_finish,black_gap_limit)
+    draw_image_bucket(plan_path if logs else plan,speed,pixel_finish,finish_limit,
+                         black_gap_finish,black_gap_limit,logs=logs)
 
 
 def main():
@@ -839,6 +849,7 @@ def main():
     source_group.add_argument('--source-image', type=Path, help='Exact-color source image (up to 16 colors)')
     source_group.add_argument('--image-bucket', type=Path, help='Existing 16-color Paint stroke plan')
     parser.add_argument('--speed', type=float, default=20, help='Drawing speed multiplier (0..100)')
+    parser.add_argument('--logs', action='store_true', help='Save plans and Paint comparison diagnostics (off by default)')
     parser.add_argument('--pixel-perfect-finish', action='store_true', help='Experimental local pixel correction')
     parser.add_argument('--pixel-finish-limit', type=int, default=1500)
     parser.add_argument('--black-gap-finish', action='store_true', help='Report black gaps without unsafe repair')
@@ -853,12 +864,12 @@ def main():
     if args.image_bucket is not None:
         draw_image_bucket(args.image_bucket, args.speed,
                              args.pixel_perfect_finish, args.pixel_finish_limit,
-                             args.black_gap_finish, args.black_gap_limit)
+                             args.black_gap_finish, args.black_gap_limit, logs=args.logs)
     else:
         source_path = Path('assets/house-reference.png') if args.house else args.source_image
         draw_source_image(source_path, args.speed,
                           args.pixel_perfect_finish, args.pixel_finish_limit,
-                          args.black_gap_finish, args.black_gap_limit)
+                          args.black_gap_finish, args.black_gap_limit, logs=args.logs)
 
 
 if __name__ == '__main__':
