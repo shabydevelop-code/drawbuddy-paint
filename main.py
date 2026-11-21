@@ -662,29 +662,24 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         engine.paint.validate_canvas_points(mapped)
         engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,duration=0.012)
 
+    # One stable ink color per continuous outer contour. Never sample the
+    # source color at every contour point: that causes thousands of color
+    # changes and breaks the mouse path into tiny fragments.
+    ink_colors = [(rgb,int(np.count_nonzero(mask))) for rgb,mask in groups
+                  if max(rgb) <= 24 and rgb != (255,255,255)]
+    if not ink_colors:
+        raise RuntimeError('No outline ink color found in source plan')
+    outline_rgb = max(ink_colors,key=lambda entry:entry[1])[0]
     silhouette = np.uint8(occupied != 0)*255
     exterior_contours,_ = cv2.findContours(
         silhouette,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
-    print(f'DRAW STAGE 1/3: OUTER CONTOURS ({len(exterior_contours)})',flush=True)
+    print(f'DRAW STAGE 1/3: OUTER CONTOURS ({len(exterior_contours)}), '
+          f'fixed ink color={outline_rgb}',flush=True)
     for contour in sorted(exterior_contours,key=cv2.contourArea,reverse=True):
         check_cancel()
         points = [tuple(map(int,p[0])) for p in contour]
-        if not points:
-            continue
-        # Split only where the source actually changes color.
-        # Adjacent contour points retain their exact original coordinates.
-        current_color = tuple(int(v) for v in source[points[0][1],points[0][0]][::-1])
-        segment = [points[0]]
-        for pt in points[1:]+[points[0]]:
-            color = tuple(int(v) for v in source[pt[1],pt[0]][::-1])
-            if color != current_color:
-                draw_contour_path(segment,current_color)
-                segment = [pt]
-                current_color = color
-            else:
-                segment.append(pt)
-        if segment:
-            draw_contour_path(segment,current_color)
+        if len(points) > 1:
+            draw_contour_path(points+[points[0]],outline_rgb)
     print(f'DRAW STAGE 2/3: INNER CONTOURS ({len(regions)})',flush=True)
     for region in regions:
         check_cancel()
