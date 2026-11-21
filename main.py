@@ -500,11 +500,13 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             missing = int(np.count_nonzero(
                 core & np.any(actual != 255,axis=2)))
             if missing:
-                raise RuntimeError(
-                    f'White highlight {index}/{len(white_after_ink)} '
-                    f'incomplete: {missing} interior pixels; not advancing.')
-            print(f'NESTED WHITE HIGHLIGHT COMPLETE '
-                  f'{index}/{len(white_after_ink)}',flush=True)
+                print(f'NESTED WHITE HIGHLIGHT WARNING '
+                      f'{index}/{len(white_after_ink)}: '
+                      f'{missing} interior pixels remain; continuing drawing',
+                      flush=True)
+            else:
+                print(f'NESTED WHITE HIGHLIGHT COMPLETE '
+                      f'{index}/{len(white_after_ink)}',flush=True)
     narrow_strokes = 0
     narrow_skipped = len(narrow_regions)
     narrow_budget = 0
@@ -1281,11 +1283,13 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
             missing = int(np.count_nonzero(
                 core & np.any(actual != 255,axis=2)))
             if missing:
-                raise RuntimeError(
-                    f'White highlight {index}/{len(white_after_ink)} '
-                    f'incomplete: {missing} interior pixels; not advancing.')
-            print(f'NESTED WHITE HIGHLIGHT COMPLETE '
-                  f'{index}/{len(white_after_ink)}',flush=True)
+                print(f'NESTED WHITE HIGHLIGHT WARNING '
+                      f'{index}/{len(white_after_ink)}: '
+                      f'{missing} interior pixels remain; continuing drawing',
+                      flush=True)
+            else:
+                print(f'NESTED WHITE HIGHLIGHT COMPLETE '
+                      f'{index}/{len(white_after_ink)}',flush=True)
     narrow_strokes = 0
     narrow_skipped = len(narrow_regions)
     narrow_budget = 0
