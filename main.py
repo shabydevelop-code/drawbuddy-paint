@@ -647,6 +647,50 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
     repair_strokes = 0
     skipped = 0
 
+    # Enforce the drawing sequence at runtime: external silhouette FIRST,
+    # internal region boundaries SECOND, bucket operations THIRD.
+    # A source-colored silhouette contour does not invent black pixels.
+    def draw_contour_path(path,rgb):
+        nonlocal previous_rgb,color_switches
+        if rgb != previous_rgb:
+            engine.colors.select_rgb(rgb)
+            previous_rgb = rgb
+            color_switches += 1
+        engine.tools.select('pencil')
+        engine.stroke_size.select(1)
+        mapped = [(left+x,top+y) for x,y in path]
+        engine.paint.validate_canvas_points(mapped)
+        engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,duration=0.012)
+
+    silhouette = np.uint8(occupied != 0)*255
+    exterior_contours,_ = cv2.findContours(
+        silhouette,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
+    print(f'DRAW STAGE 1/3: OUTER CONTOURS ({len(exterior_contours)})',flush=True)
+    for contour in sorted(exterior_contours,key=cv2.contourArea,reverse=True):
+        check_cancel()
+        points = [tuple(map(int,p[0])) for p in contour]
+        if not points:
+            continue
+        # Split only where the source actually changes color.
+        # Adjacent contour points retain their exact original coordinates.
+        current_color = tuple(int(v) for v in source[points[0][1],points[0][0]][::-1])
+        segment = [points[0]]
+        for pt in points[1:]+[points[0]]:
+            color = tuple(int(v) for v in source[pt[1],pt[0]][::-1])
+            if color != current_color:
+                draw_contour_path(segment,current_color)
+                segment = [pt]
+                current_color = color
+            else:
+                segment.append(pt)
+        if segment:
+            draw_contour_path(segment,current_color)
+    print(f'DRAW STAGE 2/3: INNER CONTOURS ({len(regions)})',flush=True)
+    for region in regions:
+        check_cancel()
+        for path in region['paths']:
+            draw_contour_path(path,region['rgb'])
+    print(f'DRAW STAGE 3/3: BUCKET FILLS ({len(regions)})',flush=True)
     for region in regions:
         check_cancel()
         rgb = region['rgb']
@@ -654,17 +698,7 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             engine.colors.select_rgb(rgb)
             previous_rgb = rgb
             color_switches += 1
-        engine.tools.select('pencil')
-        # Controlled trial: Paint size preset 2 only for broad, nonblack
-        # color regions. Keep black outlines and small details at size 1.
-        thick_outline = False
-        engine.stroke_size.select(2 if thick_outline else 1)
-        if thick_outline:
-            thick_outline_regions += 1
-        for path in region['paths']:
-            mapped = [(left+x,top+y) for x,y in path]
-            engine.paint.validate_canvas_points(mapped)
-            engine.paint.stroke(mapped,duration=0.012)
+        # Boundaries were drawn in stage 2; fill only in this stage.
         seed = region['seed']
         fill_point = (left+seed[0],top+seed[1])
         engine.paint.validate_canvas_points([fill_point])
