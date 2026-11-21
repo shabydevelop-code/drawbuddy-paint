@@ -1651,67 +1651,75 @@ def execute_pixel_paint_plan(path, speed, execute=False, max_strokes=None, color
 
 
 
-def draw_house(speed, outlines_only=False):
-    """Draw a geometric house with real Paint Pencil contours and Bucket fills."""
-    from drawbuddy.controller import check_cancel
-    import pyautogui as pg
-    engine = DrawingEngine(speed=speed)
-    left, top = 280, 180
-    # Deliberately separated closed regions. All coordinates are relative
-    # to the house's 430x330 drawing area, never source-pixel scanlines.
-    regions = [
-        ('chimney', (177, 85, 67), [(285,38),(314,38),(314,103),(285,103)], (299,54)),
-        ('walls', (247, 224, 177), [(100,121),(330,121),(330,290),(100,290)], (215,155)),
-        ('roof', (195, 52, 48), [(77,121),(215,25),(353,121)], (215,80)),
-        ('path', (204, 192, 168), [(189,290),(241,290),(270,325),(160,325)], (215,310)),
-        ('door', (129, 79, 48), [(185,207),(245,207),(245,290),(185,290)], (215,250)),
-        ('left_window', (90, 175, 219), [(123,162),(172,162),(172,207),(123,207)], (146,183)),
-        ('right_window', (90, 175, 219), [(258,162),(307,162),(307,207),(258,207)], (280,183)),
-    ]
-    # Check the complete plan before the first Paint interaction.
-    for name, rgb, vertices, seed in regions:
-        if len(vertices) < 3 or not all(
-            0 <= x < 430 and 0 <= y < 330 for x,y in vertices+[seed]
-        ):
-            raise ValueError(f'Invalid house region: {name}')
-        engine.paint.validate_canvas_points(
-            [(left+x,top+y) for x,y in vertices+[seed]])
-    print('HOUSE STAGE 1/2: closed black outlines',flush=True)
-    engine.tools.select('pencil')
-    engine.stroke_size.select(1)
-    engine.colors.select_rgb((0,0,0))
-    for name, rgb, vertices, seed in regions:
-        check_cancel()
-        path = [(left+x,top+y) for x,y in vertices+[vertices[0]]]
-        engine.paint.stroke(path,duration=0.012)
-        print(f'HOUSE OUTLINE: {name}',flush=True)
-    if outlines_only:
-        from pathlib import Path
-        image_path = Path('output/comparison/house/outlines.png')
-        image_path.parent.mkdir(parents=True,exist_ok=True)
-        sx,sy = engine.paint.point(left,top)
-        shot = pg.screenshot()
-        if sx < 0 or sy < 0 or sx+430 > shot.width or sy+330 > shot.height:
-            raise RuntimeError('House outline screenshot outside display')
-        shot.crop((sx,sy,sx+430,sy+330)).save(image_path)
-        print(f'HOUSE OUTLINES ONLY: no Bucket, no doorknob; screenshot={image_path}',flush=True)
-        return
-    print('HOUSE STAGE 2/2: Bucket fills',flush=True)
-    engine.tools.select('bucket')
-    for name, rgb, vertices, seed in regions:
-        check_cancel()
-        engine.colors.select_rgb(rgb)
-        engine.tools.select('bucket')
-        engine.canvas.fill(left+seed[0],top+seed[1])
-        print(f'HOUSE FILL: {name} RGB={rgb}',flush=True)
-    # A small doorknob is a meaningful single pencil detail.
-    engine.colors.select_rgb((242, 202, 91))
-    engine.tools.select('pencil')
-    engine.stroke_size.select(1)
-    knob = (left+234,top+252)
-    engine.paint.validate_canvas_points([knob])
-    engine.canvas.fill(*knob)
-    print('HOUSE COMPLETE: review the Paint canvas; actual RGB fidelity is unverified',flush=True)
+def draw_source_image(source_path, speed, pixel_finish=False, finish_limit=1500,
+                      black_gap_finish=False, black_gap_limit=120):
+    """Convert a lossless <=16-color image to the existing dog contour/Bucket engine."""
+    import cv2
+    import numpy as np
+    image = cv2.imread(str(source_path),cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError(f'Cannot read source image: {source_path}')
+    h,w = image.shape[:2]
+    if not (1 <= w <= 500 and 1 <= h <= 547):
+        raise ValueError('Source must be at most 500x547; no automatic resizing')
+    rgb = cv2.cvtColor(image,cv2.COLOR_BGR2RGB)
+    colors,counts = np.unique(rgb.reshape(-1,3),axis=0,return_counts=True)
+    if len(colors) > 16:
+        raise ValueError(f'Source has {len(colors)} colors (maximum 16). '
+                         'Refusing lossy palette reduction.')
+    groups = []
+    for color,count in zip(colors,counts):
+        color = tuple(int(v) for v in color)
+        if color == (255,255,255):
+            continue
+        mask = np.all(rgb == np.asarray(color,np.uint8),axis=2)
+        strokes = []
+        for y,row in enumerate(mask):
+            xs = np.flatnonzero(row)
+            if not len(xs):
+                continue
+            for run in np.split(xs,np.flatnonzero(np.diff(xs)>1)+1):
+                strokes.append([int(run[0]),y,int(run[-1]),y])
+        groups.append({'rgb':'#%02X%02X%02X'%color,
+                       'pixels':int(count),'strokes':strokes})
+    output = Path('output/pixel-map')
+    output.mkdir(parents=True,exist_ok=True)
+    plan_path = output/'pixel-map-paint-plan16.json'
+    plan_path.write_text(json.dumps({
+        'format':'drawbuddy-paint-stroke-plan-v1','width':w,'height':h,
+        'coordinate_system':'image-local-zero-based','background':'white-prefilled',
+        'groups':groups
+    },separators=(',',':')),encoding='utf-8')
+    print(f'SOURCE IMAGE: {source_path}, {w}x{h}, {len(colors)} exact colors; '
+          'using existing full contour/Bucket engine',flush=True)
+    draw_full_dog_bucket(plan_path,speed,pixel_finish,finish_limit,
+                         black_gap_finish,black_gap_limit)
+
+
+def build_house_reference():
+    """Build the canonical house test image, not a separate Paint renderer."""
+    import cv2
+    import numpy as np
+    image = np.full((330,430,3),255,np.uint8)
+    def polygon(vertices,rgb):
+        bgr = tuple(reversed(rgb))
+        cv2.fillPoly(image,[np.asarray(vertices,np.int32)],bgr)
+        cv2.polylines(image,[np.asarray(vertices,np.int32)],True,(0,0,0),1,
+                      lineType=cv2.LINE_8)
+    polygon([(285,38),(314,38),(314,103),(285,103)],(177,85,67))
+    polygon([(100,121),(330,121),(330,290),(100,290)],(247,224,177))
+    polygon([(77,121),(215,25),(353,121)],(195,52,48))
+    polygon([(189,290),(241,290),(270,325),(160,325)],(204,192,168))
+    polygon([(185,207),(245,207),(245,290),(185,290)],(129,79,48))
+    polygon([(123,162),(172,162),(172,207),(123,207)],(90,175,219))
+    polygon([(258,162),(307,162),(307,207),(258,207)],(90,175,219))
+    cv2.circle(image,(234,252),2,(91,202,242),-1,lineType=cv2.LINE_8)
+    output = Path('output/house')
+    output.mkdir(parents=True,exist_ok=True)
+    path = output/'reference.png'
+    if not cv2.imwrite(str(path),image):
+        raise RuntimeError('Could not write house reference')
+    return path
 
 
 def main():
@@ -1720,8 +1728,8 @@ def main():
     parser.add_argument('--ear-contour-test', type=Path, help='Draw one real upper-head outline gesture from the pixel plan')
     parser.add_argument('--region-bucket-test', type=Path, help='Outline one real closed color region and fill it with Paint bucket')
     parser.add_argument('--neighbor-regions-test', type=Path, help='Draw and bucket-fill nearby distinct color regions')
-    parser.add_argument('--house', action='store_true', help='Draw a geometric house with Pencil contours and Bucket fills')
-    parser.add_argument('--house-outlines-only', action='store_true', help='Diagnose house contours without Bucket fills')
+    parser.add_argument('--house', action='store_true', help='Draw the canonical house reference using the existing dog engine')
+    parser.add_argument('--source-image', type=Path, help='Draw a lossless <=16-color PNG using the existing contour/Bucket engine')
     parser.add_argument('--full-dog-bucket', type=Path, help='Draw entire color pixel map with closed contours and bucket fills')
     parser.add_argument('--pixel-perfect-finish', action='store_true', help='Experimental pixel print correction after drawing')
     parser.add_argument('--pixel-finish-limit', type=int, default=1500, help='Maximum finishing strokes')
@@ -1756,13 +1764,16 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
-    if args.house or args.house_outlines_only:
-        if args.full_dog_bucket is not None:
-            parser.error('--house cannot be combined with --full-dog-bucket')
+    if args.house or args.source_image is not None:
+        if args.full_dog_bucket is not None or (args.house and args.source_image is not None):
+            parser.error('Select only one source: --house, --source-image or --full-dog-bucket')
         speed = args.speed if args.speed is not None else 20
         if not math.isfinite(speed) or not 0 < speed <= 100:
             parser.error('Invalid drawing speed')
-        draw_house(float(speed),outlines_only=args.house_outlines_only)
+        source = build_house_reference() if args.house else args.source_image
+        draw_source_image(source,float(speed),args.pixel_perfect_finish,
+                          args.pixel_finish_limit,args.black_gap_finish,
+                          args.black_gap_limit)
         return
     if args.full_dog_bucket is not None:
         if args.neighbor_regions_test or args.region_bucket_test or args.ear_contour_test or args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
