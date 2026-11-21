@@ -532,10 +532,12 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
             contour = max(contours,key=cv2.contourArea)
             dist = cv2.distanceTransform(component,cv2.DIST_L2,3)
             _,radius,_,seed = cv2.minMaxLoc(dist)
-            is_black = rgb == (0,0,0)
-            if is_black:
-                # Black is an ink layer, NEVER a bucket region.
-                # Paint it once after every color fill.
+            is_ink = max(rgb) <= 24
+            if is_ink:
+                # Both true black and near-black are outline ink, not
+                # bucket-fill regions. Their connected components can
+                # surround large holes; RETR_EXTERNAL would flood them.
+                # The dedicated final ink stage draws these details.
                 continue
             if area < 8:
                 omitted_pixels += area
