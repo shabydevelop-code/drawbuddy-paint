@@ -681,10 +681,27 @@ def draw_full_dog_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500
         if len(points) > 1:
             draw_contour_path(points+[points[0]],outline_rgb)
     print(f'DRAW STAGE 2/3: INNER CONTOURS ({len(regions)})',flush=True)
+    # Paint's one-pixel pencil stroke is centered on each component's
+    # boundary pixel. Independent neighboring contours can consequently
+    # leave a one-pixel white seam between their painted footprints.
+    # Overlap broad COLOR boundaries by one Paint pixel during the contour
+    # stage, rather than raster-printing or repairing the entire image.
+    # Preserve single-pixel dark ink contours and tiny details.
     for region in regions:
         check_cancel()
+        rgb = region['rgb']
+        is_ink = max(rgb) <= 24
         for path in region['paths']:
-            draw_contour_path(path,region['rgb'])
+            if rgb != previous_rgb:
+                engine.colors.select_rgb(rgb)
+                previous_rgb = rgb
+                color_switches += 1
+            engine.tools.select('pencil')
+            engine.stroke_size.select(1 if is_ink else 2)
+            mapped = [(left+x,top+y) for x,y in path]
+            engine.paint.validate_canvas_points(mapped)
+            engine.paint.stroke(mapped if len(mapped)>1 else mapped*2,duration=0.012)
+    engine.stroke_size.select(1)
     print(f'DRAW STAGE 3/3: BUCKET FILLS ({len(regions)})',flush=True)
     for region in regions:
         check_cancel()
