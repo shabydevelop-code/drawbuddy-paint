@@ -460,6 +460,116 @@ def draw_scene_strokes(path, speed, limit=None, validate_only=False, min_stroke_
 
 
 
+
+def draw_neighbor_regions_test(plan_path, speed):
+    """Paint five nearby, hole-free color components: contour then bucket for each."""
+    import cv2
+    import numpy as np
+    import time
+    from drawbuddy.controller import check_cancel
+    data = json.loads(Path(plan_path).read_text(encoding='utf-8'))
+    w, h = data.get('width'), data.get('height')
+    if (data.get('format') != 'drawbuddy-paint-stroke-plan-v1'
+            or not isinstance(w, int) or not isinstance(h, int)
+            or not 1 <= w <= 500 or not 1 <= h <= 547):
+        raise ValueError('Invalid original pixel plan')
+    candidates = []
+    for group in data['groups']:
+        if group['background']:
+            continue
+        rgb = tuple(bytes.fromhex(group['rgb'][1:]))
+        if len(rgb) != 3:
+            raise ValueError('Invalid RGB')
+        mask = np.zeros((h, w), np.uint8)
+        for x0, y0, x1, y1 in group['strokes']:
+            if not 0 <= x0 <= x1 < w or not 0 <= y0 == y1 < h:
+                raise ValueError('Invalid plan run')
+            mask[y0, x0:x1+1] = 255
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        for idx in range(1, count):
+            x, y, bw, bh, area = map(int, stats[idx])
+            if not (200 <= area <= 12000 and bw >= 15 and bh >= 15
+                    and x >= 3 and y >= 3 and x+bw < w-3 and y+bh < h-3):
+                continue
+            component = np.uint8(labels == idx) * 255
+            contours, hierarchy = cv2.findContours(component, cv2.RETR_CCOMP,
+                                                     cv2.CHAIN_APPROX_NONE)
+            if hierarchy is None or len(contours) != 1 or cv2.contourArea(contours[0]) < 160:
+                continue
+            dist = cv2.distanceTransform(component, cv2.DIST_L2, 5)
+            _, radius, _, seed = cv2.minMaxLoc(dist)
+            if radius < 4:
+                continue
+            candidates.append({'rgb':rgb, 'area':area, 'contour':contours[0],
+                               'seed':seed, 'mask':component, 'center':(x+bw/2,y+bh/2)})
+    if len(candidates) < 3:
+        raise ValueError(f'Only {len(candidates)} suitable regions; need at least three')
+    # Choose a compact group with distinct colors, favoring close-by components.
+    best = None
+    for anchor in candidates:
+        ax, ay = anchor['center']
+        ordered = sorted(candidates, key=lambda c:
+            ((c['center'][0]-ax)**2+(c['center'][1]-ay)**2, -c['area']))
+        selected = []
+        used_colors = set()
+        for candidate in ordered:
+            if candidate['rgb'] in used_colors:
+                continue
+            selected.append(candidate)
+            used_colors.add(candidate['rgb'])
+            if len(selected) == 5:
+                break
+        if len(selected) < 3:
+            continue
+        spread = max((c['center'][0]-ax)**2+(c['center'][1]-ay)**2 for c in selected)
+        score = (len(selected) != 5, spread, abs(anchor['area']-1600))
+        if best is None or score < best[0]:
+            best = (score, selected)
+    if best is None:
+        raise ValueError('Cannot select three differently colored regions')
+    selected = best[1]
+    left, top = 250+(500-w)//2, 155+(547-h)//2
+    output = Path('output/comparison/neighbor-regions-test')
+    output.mkdir(parents=True, exist_ok=True)
+    expected = np.full((h,w,3), 255, np.uint8)
+    # Build the expected composite before opening Paint.
+    for region in selected:
+        cv2.fillPoly(expected, [region['contour']], region['rgb'][::-1],
+                     lineType=cv2.LINE_8)
+    cv2.imwrite(str(output/'expected.png'), expected)
+    plans = []
+    for region in selected:
+        points = [tuple(map(int, p[0])) for p in region['contour']]
+        points.append(points[0])
+        mapped = [(left+x,top+y) for x,y in points]
+        seed = (left+region['seed'][0],top+region['seed'][1])
+        plans.append((region['rgb'],mapped,seed))
+    print(f'NEIGHBOR REGION TEST: {len(plans)} nearby color regions; outline + bucket each')
+    print('Open a NEW blank white maximized Paint canvas. F8 cancels.')
+    engine = DrawingEngine(speed=speed)
+    for _, points, seed in plans:
+        engine.paint.validate_canvas_points(points+[seed])
+    start = time.perf_counter()
+    engine.stroke_size.select(1)
+    for i,(rgb,points,seed) in enumerate(plans,1):
+        check_cancel()
+        engine.colors.select_rgb(rgb)
+        engine.tools.select('pencil')
+        engine.paint.stroke(points, duration=0.012)
+        engine.tools.select('bucket')
+        engine.canvas.fill(*seed)
+        print(f'  Region {i}/{len(plans)} filled; color={rgb}')
+    engine.paint.refresh_display()
+    report = compare_paint_canvas(engine.paint,output/'expected.png',
+                                  w,h,left,top,output=output,tolerance=0)
+    report['test'] = 'multiple color-region contours and bucket fills'
+    report['region_count'] = len(plans)
+    report['elapsed_seconds'] = round(time.perf_counter()-start,3)
+    (output/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+    print(f'NEIGHBOR REGION TEST: exact match={report["exact_pixel_match_percent"]}%, '
+          f'errors={report["error_pixels"]}; output={output}')
+
+
 def draw_region_bucket_test(plan_path, speed):
     """Draw one genuine closed color-region outline, then bucket-fill it in Paint."""
     import cv2
@@ -835,6 +945,7 @@ def main():
     parser.add_argument('--paint-plan', type=Path, help='Validate or draw a 16-color pixel stroke plan')
     parser.add_argument('--ear-contour-test', type=Path, help='Draw one real upper-head outline gesture from the pixel plan')
     parser.add_argument('--region-bucket-test', type=Path, help='Outline one real closed color region and fill it with Paint bucket')
+    parser.add_argument('--neighbor-regions-test', type=Path, help='Draw and bucket-fill nearby distinct color regions')
     parser.add_argument('--continuous-paths', type=Path, help='Continuous-path analysis JSON')
     parser.add_argument('--continuous-path-test', type=int, choices=(1, 20), help='Draw 1 or 20 paths in Paint')
     parser.add_argument('--paint-plan-gap-test', action='store_true', help='Draw only two separated orange strokes to diagnose unwanted connector lines')
@@ -864,6 +975,14 @@ def main():
     parser.add_argument('--no-compare', action='store_true', help='Skip automatic Paint vs source comparison')
     parser.add_argument('--binary-threshold', type=int, default=None, help='Optional grayscale cutoff 0..255 (default: Otsu)')
     args = parser.parse_args()
+    if args.neighbor_regions_test is not None:
+        if args.region_bucket_test or args.ear_contour_test or args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
+            parser.error('--neighbor-regions-test must be used alone')
+        speed = args.speed if args.speed is not None else 20
+        if not isinstance(speed, (int, float)) or not math.isfinite(speed) or not 0 < speed <= 100:
+            parser.error('Invalid drawing speed')
+        draw_neighbor_regions_test(args.neighbor_regions_test, float(speed))
+        return
     if args.region_bucket_test is not None:
         if args.ear_contour_test or args.paint_plan or args.continuous_paths or args.continuous_path_test or args.drawing or args.scene_strokes:
             parser.error('--region-bucket-test must be used alone')
