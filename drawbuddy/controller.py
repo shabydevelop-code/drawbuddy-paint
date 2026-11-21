@@ -225,7 +225,7 @@ class PaintController:
                     raise ValueError(f"Raster point ({x},{y}) outside safe Paint canvas")
         self.activate()
         old_pause, old_min = pg.PAUSE, pg.MINIMUM_DURATION
-        pg.PAUSE, pg.MINIMUM_DURATION = 0, 0
+        pg.PAUSE, pg.MINIMUM_DURATION = 0, 0.01
         release_dwell = 0.035
         press_dwell = 0.012
         try:
