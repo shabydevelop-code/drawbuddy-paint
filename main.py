@@ -930,6 +930,57 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
                 'sample_xy':[[int(x),int(y)] for x,y in zip(xs[:20],ys[:20])]
             })
     excluded_by_color.sort(key=lambda entry:-entry['pixels'])
+
+    # Audit all thin non-ink components excluded by the 3x3 Bucket rule.
+    # This reports the missing detail topology without drawing extra
+    # Pencil strokes or introducing image-specific heuristics.
+    narrow_by_color = {}
+    narrow_components = []
+    for item in narrow_regions:
+        ys,xs = np.where(item['mask'] != 0)
+        if not len(xs):
+            continue
+        rgb = item['rgb']
+        color = '#%02X%02X%02X' % rgb
+        bbox = [int(xs.min()),int(ys.min()),int(xs.max()),int(ys.max())]
+        record = narrow_by_color.setdefault(color,{
+            'components':0,'pixels':0,'largest_area':0,
+            'small_2_to_3':0,'medium_4_to_15':0,'large_16_plus':0
+        })
+        record['components'] += 1
+        record['pixels'] += int(item['area'])
+        record['largest_area'] = max(record['largest_area'],int(item['area']))
+        if item['area'] <= 3:
+            record['small_2_to_3'] += 1
+        elif item['area'] <= 15:
+            record['medium_4_to_15'] += 1
+        else:
+            record['large_16_plus'] += 1
+        narrow_components.append({
+            'rgb':color,'area':int(item['area']),
+            'bbox_xyxy':bbox,'free_pixels':int(item['free_pixels'])
+        })
+    narrow_components.sort(key=lambda entry:-entry['area'])
+    white_component_stats = []
+    white_source_mask = np.uint8(np.all(source == 255,axis=2))*255
+    count,white_labels,white_stats,_ = cv2.connectedComponentsWithStats(
+        white_source_mask,8)
+    for idx in range(1,count):
+        x,y,bw,bh,area = map(int,white_stats[idx])
+        if x == 0 or y == 0 or x+bw == w or y+bh == h:
+            continue
+        component = white_labels == idx
+        planned = int(np.count_nonzero(component & planned_mask))
+        white_component_stats.append({
+            'area':area,'bbox_xyxy':[x,y,x+bw-1,y+bh-1],
+            'planned_bucket_pixels':planned,
+            'excluded_from_bucket':planned == 0
+        })
+    white_component_stats.sort(key=lambda entry:-entry['area'])
+    print(f'NARROW COMPONENT AUDIT: {len(narrow_components)} components; '
+          f'by_color={[(k,v["components"],v["pixels"]) for k,v in sorted(narrow_by_color.items(),key=lambda e:-e[1]["pixels"])]}; '
+          f'enclosed_white={len(white_component_stats)}',flush=True)
+
     print(f'SOURCE VS PLAN: {int(np.count_nonzero(excluded))} '
           f'nonwhite pixels outside Bucket regions; '
           f'by_color={[(e["rgb"],e["pixels"]) for e in excluded_by_color]}',
@@ -943,6 +994,9 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
                         'source_vs_plan':{
                             'unplanned_nonwhite_pixels':int(np.count_nonzero(excluded)),
                             'excluded_by_color':excluded_by_color,
+                            'narrow_by_color':narrow_by_color,
+                            'largest_narrow_components':narrow_components[:100],
+                            'enclosed_white_components':white_component_stats[:100],
                             'note':'Black source pixels are intentionally absent from Bucket regions; inspect nonblack colors separately.'
                         }},indent=2),encoding='utf-8')
     # Holes are not missing pixels: RETR_EXTERNAL deliberately surrounds
