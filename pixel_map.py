@@ -457,11 +457,10 @@ def analyze_continuous_paths(plan_path, output_dir='output/pixel-map'):
                     for child, cx in reversed(children[node]):
                         stack.append(('return', node, anchor))
                         stack.append(('visit', child, cx))
-                        stack.append(('descend', node, cx))
+                        stack.append(('descend', child, cx))
                 elif op == 'descend':
+                    add(anchor, points[-1][1])
                     add(anchor, y)
-                    child = next(c for c, cx in children[node] if cx == anchor)
-                    add(anchor, nodes[child][2])
                 elif op == 'return':
                     # The child ends at its entry x; return to the parent row.
                     child_y = points[-1][1]
