@@ -178,8 +178,8 @@ def draw_image_bucket(plan_path, speed, pixel_finish=False, finish_limit=1500, b
     # Only true black source pixels become black marks; never trace both sides of a thin black component.
     details.sort(key=lambda x:(x['rgb'] == (0,0,0),x['rgb'],-x['area']))
     left,top = 250+(500-w)//2,155+(547-h)//2
+    output = Path('output/comparison/image-bucket')
     if logs:
-        output = Path('output/comparison/image-bucket')
         output.mkdir(parents=True,exist_ok=True)
         cv2.imwrite(str(output/'expected.png'),source)
     print(f'IMAGE DRAW: {len(regions)} fill regions, {len(details)} thin details, '
